@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title> Password Manager</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- ============ AUTH SECTION ============ -->
+    <div id="auth-section">
+        <div class="container">
+            <h1> Password Manager</h1>
+            <p class="subtitle">Zero-Knowledge • Client-Side Encryption</p>
+            
+            <!-- Login Form -->
+            <div id="login-form">
+                <h2>Login</h2>
+                <input type="email" id="login-email" placeholder="Email" required>
+                <input type="password" id="login-password" placeholder="Master Password" required>
+                <button id="login-btn">Login</button>
+                <p>Don't have an account? <a href="#" id="show-register">Register</a></p>
+                <div id="login-error" class="error"></div>
+            </div>
+
+            <!-- Register Form -->
+            <div id="register-form" style="display:none;">
+                <h2>Register</h2>
+                <input type="email" id="register-email" placeholder="Email" required>
+                <input type="password" id="register-password" placeholder="Master Password" required>
+                <button id="register-btn">Register</button>
+                <p>Already have an account? <a href="#" id="show-login">Login</a></p>
+                <div id="register-error" class="error"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============ VAULT SECTION ============ -->
+    <div id="vault-section" style="display:none;">
+        <div class="container">
+            <div class="header">
+                <h1> My Vault</h1>
+                <button id="logout-btn">Logout</button>
+                <!-- 2FA Settings -->
+<div id="twofa-section" style="margin-top: 30px; padding: 20px; background: rgba(255,255,255,0.05); border-radius: 15px;">
+    <h3> Two-Factor Authentication (2FA)</h3>
+    <div id="twofa-status">
+        <p id="twofa-status-text">Status: Loading...</p>
+    </div>
+    <div id="twofa-setup" style="display:none;">
+        <p>Scan this QR code with Google Authenticator:</p>
+        <div id="qr-code-container" style="text-align: center; margin: 20px 0;">
+            <img id="qr-code-image" src="" alt="QR Code" style="max-width: 200px; border-radius: 10px;">
+        </div>
+        <p>Or enter this secret manually: <strong id="twofa-secret"></strong></p>
+        <input type="text" id="twofa-code-input" placeholder="Enter 6-digit code from app" style="width: 100%; padding: 12px; margin: 10px 0;">
+        <button id="enable-2fa-btn">Enable 2FA</button>
+    </div>
+    <button id="setup-2fa-btn" style="display: none;">Setup 2FA</button>
+    <button id="disable-2fa-btn" style="display: none; background: rgba(255,0,0,0.2); color: #ff4444;">Disable 2FA</button>
+    <div id="twofa-error" class="error"></div>
+</div>
+            </div>
+            <p class="subtitle">All passwords are encrypted in your browser</p>
+
+            <!-- Add Password Form -->
+            <div class="add-form">
+                <h3>Add New Password</h3>
+                <input type="text" id="site-name" placeholder="Site Name (e.g., Google)">
+                <input type="text" id="site-username" placeholder="Username">
+                <input type="password" id="site-password" placeholder="Password">
+                <button id="add-btn">Add Password</button>
+                <div id="add-error" class="error"></div>
+            </div>
+
+            <!-- Password List -->
+            <div id="password-list">
+                <h3>Saved Passwords</h3>
+                <div id="passwords-container"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

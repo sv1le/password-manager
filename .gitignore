@@ -1,0 +1,26 @@
+# Environment variables (CRITICAL - contains secrets!)
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+ENV/
+
+# Benchmark outputs (optional - you can remove these lines if you want them on GitHub)
+benchmark_results.csv
+table_*.csv
+*.png
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log 
