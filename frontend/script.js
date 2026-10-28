@@ -910,7 +910,9 @@ async function createSecureShare(itemToShare, receiverPublicKeyBase64) {
     
     // 3. Export the AES key and encrypt it with User B's RSA Public Key
     const rawAesKey = await crypto.subtle.exportKey("raw", aesKey);
-    const receiverPubKeyBuffer = Uint8Array.from(atob(receiverPublicKeyBase64), c => c.charCodeAt(0));
+    // Strip out any spaces or newlines before decoding
+    const cleanKey = receiverPublicKeyBase64.replace(/\s+/g, '');
+    const receiverPubKeyBuffer = Uint8Array.from(atob(cleanKey), c => c.charCodeAt(0));
     
     const receiverPubKey = await crypto.subtle.importKey(
         "spki",
