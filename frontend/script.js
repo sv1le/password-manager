@@ -145,6 +145,38 @@ async function hashPassword(password) {
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+
+// ============================================
+// RSA KEY GENERATION (For Sharing)
+// ============================================
+async function generateRSAKeyPair() {
+    // Check if we already have keys for this user
+    const email = loginEmail.value; // Assuming they just logged in
+    if (localStorage.getItem(`pubKey_${email}`)) return;
+
+    const keyPair = await crypto.subtle.generateKey(
+        {
+            name: "RSA-OAEP",
+            modulusLength: 2048,
+            publicExponent: new Uint8Array([1, 0, 1]),
+            hash: "SHA-256",
+        },
+        true, // extractable
+        ["encrypt", "decrypt"]
+    );
+
+    // Export keys to base64 for storage
+    const publicKey = await crypto.subtle.exportKey("spki", keyPair.publicKey);
+    const privateKey = await crypto.subtle.exportKey("pkcs8", keyPair.privateKey);
+    
+    const pubBase64 = btoa(String.fromCharCode(...new Uint8Array(publicKey)));
+    const privBase64 = btoa(String.fromCharCode(...new Uint8Array(privateKey)));
+
+    // Save to localStorage (FOR DEMO ONLY)
+    localStorage.setItem(`pubKey_${email}`, pubBase64);
+    localStorage.setItem(`privKey_${email}`, privBase64);
+}
+
 // ============================================
 // SECURITY FUNCTIONS (Strength & Breach)
 // ============================================
@@ -691,6 +723,7 @@ loginBtn.addEventListener('click', async () => {
         currentToken = result.token;
         currentUser = result.user;
         masterPassword = password; 
+        await generateRSAKeyPair(email);
         showVault();
         await loadPasswords();
     } else {
@@ -781,3 +814,43 @@ sitePassword.addEventListener('keypress', (e) => {
 showAuth();
 console.log('🔐 Password Manager Frontend Loaded!');
 console.log('📡 Backend API:', API_URL);
+
+
+async function createSecureShare(itemToShare, receiverPublicKeyBase64) {
+    // 1. Create a random AES key for this specific share
+    const aesKey = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
+    
+    // 2. Encrypt the password data with the AES key
+    const encoder = new TextEncoder();
+    const dataBuffer = encoder.encode(JSON.stringify(itemToShare));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    
+    const encryptedData = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, aesKey, dataBuffer);
+    
+    // 3. Export the AES key and encrypt it with User B's RSA Public Key
+    const rawAesKey = await crypto.subtle.exportKey("raw", aesKey);
+    const receiverPubKeyBuffer = Uint8Array.from(atob(receiverPublicKeyBase64), c => c.charCodeAt(0));
+    
+    const receiverPubKey = await crypto.subtle.importKey(
+        "spki",
+        receiverPubKeyBuffer,
+        { name: "RSA-OAEP", hash: "SHA-256" },
+        false,
+        ["encrypt"]
+    );
+
+    const encryptedAesKey = await crypto.subtle.encrypt(
+        { name: "RSA-OAEP" },
+        receiverPubKey,
+        rawAesKey
+    );
+
+    // 4. Package it all together into one "Blob" to send to the server
+    const shareBlob = {
+        encryptedData: btoa(String.fromCharCode(...new Uint8Array(encryptedData))),
+        encryptedKey: btoa(String.fromCharCode(...new Uint8Array(encryptedAesKey))),
+        iv: btoa(String.fromCharCode(...iv))
+    };
+
+    return JSON.stringify(shareBlob);
+}
