@@ -888,7 +888,7 @@ console.log(' Backend API:', API_URL);
 console.log(' Zero-Knowledge Architecture Active!');
 console.log(' All encryption happens in your browser!');
 
-const sitePasswordInput = document.getElementById('site-password');
+
 const strengthDiv = document.getElementById('password-strength');
 
 sitePasswordInput.addEventListener('input', function () {
@@ -979,55 +979,3 @@ const strengthDiv = document.getElementById('password-strength');
 const checkBreachBtn = document.getElementById('check-breach-btn');
 const warningDiv = document.getElementById('breach-warning');
 
-// 1. Real-time Password Strength Meter (zxcvbn)
-if (sitePasswordInput) {
-    sitePasswordInput.addEventListener('input', function() {
-        const pwd = this.value;
-        if (!pwd) {
-            strengthDiv.textContent = '';
-            return;
-        }
-
-        // Check if zxcvbn is loaded
-        if (typeof zxcvbn === 'undefined') {
-            strengthDiv.textContent = "Strength meter unavailable (zxcvbn missing)";
-            return;
-        }
-
-        const result = zxcvbn(pwd);
-        const score = result.score; // 0 to 4
-        const labels = ['Very Weak', 'Weak', 'Fair', 'Strong', 'Very Strong'];
-        const colors = ['#ff4444', '#ffaa00', '#ffdd00', '#88cc00', '#00d4ff'];
-
-        strengthDiv.textContent = `Strength: ${labels[score]}`;
-        strengthDiv.style.color = colors[score];
-    });
-}
-
-// 2. Breach Checker Button
-if (checkBreachBtn) {
-    checkBreachBtn.addEventListener('click', async () => {
-        const pwd = sitePasswordInput.value;
-
-        if (!pwd) {
-            warningDiv.textContent = "Please type a password first.";
-            return;
-        }
-
-        warningDiv.textContent = "Checking...";
-        warningDiv.style.color = "#ffaa00";
-
-        const breachCount = await checkPwned(pwd);
-
-        if (breachCount === null) {
-            warningDiv.textContent = "Error connecting to HIBP.";
-            warningDiv.style.color = "#ff4444";
-        } else if (breachCount > 0) {
-            warningDiv.textContent = `⚠️ DANGER: This password has appeared in ${breachCount.toLocaleString()} data breaches! DO NOT USE IT.`;
-            warningDiv.style.color = "#ff4444";
-        } else {
-            warningDiv.textContent = "✅ Good news! This password hasn't been found in any known breaches.";
-            warningDiv.style.color = "#00d4ff";
-        }
-    });
-}
