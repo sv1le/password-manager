@@ -889,7 +889,7 @@ console.log(' Zero-Knowledge Architecture Active!');
 console.log(' All encryption happens in your browser!');
 
 
-const strengthDiv = document.getElementById('password-strength');
+
 
 sitePasswordInput.addEventListener('input', function () {
     const pwd = this.value;
