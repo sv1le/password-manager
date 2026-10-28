@@ -4,105 +4,140 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title> Password Manager</title>
+    <title>Zero-Knowledge Password Manager</title>
     <link rel="stylesheet" href="style.css">
+    <!-- zxcvbn for password strength -->
     <script src="https://cdn.jsdelivr.net/npm/zxcvbn@4.4.2/dist/zxcvbn.js"></script>
 </head>
 
 <body>
 
     <!-- ============ AUTH SECTION ============ -->
-    <div id="auth-section">
-        <div class="container">
-            <h1> Password Manager</h1>
-            <p class="subtitle">Zero-Knowledge • Client-Side Encryption</p>
+    <div id="auth-section" class="auth-wrapper">
+        <div class="auth-card">
+            <div class="brand">
+                <h1>🛡️ VaultGuard</h1>
+                <p class="subtitle">Zero-Knowledge Password Manager</p>
+            </div>
 
             <!-- Login Form -->
-            <div id="login-form">
-                <h2>Login</h2>
-                <input type="email" id="login-email" placeholder="Email" required>
-                <input type="password" id="login-password" placeholder="Master Password" required>
-                <button id="login-btn">Login</button>
-                <p>Don't have an account? <a href="#" id="show-register">Register</a></p>
+            <div id="login-form" class="form-container">
+                <h2>Welcome Back</h2>
+                <div class="input-group">
+                    <label>Email Address</label>
+                    <input type="email" id="login-email" placeholder="name@example.com" required>
+                </div>
+                <div class="input-group">
+                    <label>Master Password</label>
+                    <input type="password" id="login-password" placeholder="Enter master password" required>
+                </div>
+                <button id="login-btn" class="primary-btn">Unlock Vault</button>
+                <p class="toggle-text">Don't have an account? <a href="#" id="show-register">Create one</a></p>
                 <div id="login-error" class="error"></div>
             </div>
 
             <!-- Register Form -->
-            <div id="register-form" style="display:none;">
-                <h2>Register</h2>
-                <input type="email" id="register-email" placeholder="Email" required>
-                <input type="password" id="register-password" placeholder="Master Password" required>
-                <button id="register-btn">Register</button>
-                <p>Already have an account? <a href="#" id="show-login">Login</a></p>
+            <div id="register-form" class="form-container" style="display:none;">
+                <h2>Create Account</h2>
+                <div class="input-group">
+                    <label>Email Address</label>
+                    <input type="email" id="register-email" placeholder="name@example.com" required>
+                </div>
+                <div class="input-group">
+                    <label>Master Password</label>
+                    <input type="password" id="register-password" placeholder="Create a strong master password" required>
+                </div>
+                <button id="register-btn" class="primary-btn">Register</button>
+                <p class="toggle-text">Already have an account? <a href="#" id="show-login">Log in</a></p>
                 <div id="register-error" class="error"></div>
             </div>
         </div>
     </div>
 
     <!-- ============ VAULT SECTION ============ -->
-    <div id="vault-section" style="display:none;">
-        <div class="container">
-            <div class="header">
-                <h1> My Vault</h1>
-                <button id="logout-btn">Logout</button>
-                <!-- 2FA Settings -->
-                <div id="twofa-section"
-                    style="margin-top: 30px; padding: 20px; background: rgba(255,255,255,0.05); border-radius: 15px;">
-                    <h3> Two-Factor Authentication (2FA)</h3>
-                    <div id="twofa-status">
-                        <p id="twofa-status-text">Status: Loading...</p>
+    <div id="vault-section" class="vault-wrapper" style="display:none;">
+        <header class="topbar">
+            <div class="brand-small">
+                <h2>🛡️ VaultGuard</h2>
+            </div>
+            <button id="logout-btn" class="danger-btn">Logout</button>
+        </header>
+
+        <main class="dashboard">
+            
+            <!-- Left Column: Security & Add Password -->
+            <div class="dashboard-column left-col">
+                
+                <!-- 2FA Settings Card -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3>🔐 Two-Factor Authentication</h3>
                     </div>
-                    <div id="twofa-setup" style="display:none;">
-                        <p>Scan this QR code with Google Authenticator:</p>
-                        <div id="qr-code-container" style="text-align: center; margin: 20px 0;">
-                            <img id="qr-code-image" src="" alt="QR Code" style="max-width: 200px; border-radius: 10px;">
+                    <div class="card-body">
+                        <div id="twofa-status">
+                            <p id="twofa-status-text">Status: Loading...</p>
                         </div>
-                        <p>Or enter this secret manually: <strong id="twofa-secret"></strong></p>
-                        <input type="text" id="twofa-code-input" placeholder="Enter 6-digit code from app"
-                            style="width: 100%; padding: 12px; margin: 10px 0;">
-                        <button id="enable-2fa-btn">Enable 2FA</button>
+                        <div id="twofa-setup" style="display:none; margin-top: 15px;">
+                            <p style="margin-bottom: 10px;">Scan this QR code with Google Authenticator:</p>
+                            <div id="qr-code-container" class="qr-container">
+                                <img id="qr-code-image" src="" alt="QR Code">
+                            </div>
+                            <p class="secret-text">Secret: <strong id="twofa-secret"></strong></p>
+                            <input type="text" id="twofa-code-input" placeholder="Enter 6-digit code" class="code-input">
+                            <button id="enable-2fa-btn" class="primary-btn mt-10">Enable 2FA</button>
+                        </div>
+                        <div class="btn-group mt-10">
+                            <button id="setup-2fa-btn" class="secondary-btn" style="display: none;">Setup 2FA</button>
+                            <button id="disable-2fa-btn" class="danger-btn" style="display: none;">Disable 2FA</button>
+                        </div>
+                        <div id="twofa-error" class="error"></div>
                     </div>
-                    <button id="setup-2fa-btn" style="display: none;">Setup 2FA</button>
-                    <button id="disable-2fa-btn"
-                        style="display: none; background: rgba(255,0,0,0.2); color: #ff4444;">Disable 2FA</button>
-                    <div id="twofa-error" class="error"></div>
+                </div>
+
+                <!-- Add Password Card -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3>➕ Add New Password</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="input-group">
+                            <input type="text" id="site-name" placeholder="Site Name (e.g., Google)">
+                        </div>
+                        <div class="input-group">
+                            <input type="text" id="site-username" placeholder="Username / Email">
+                        </div>
+                        <div class="input-group">
+                            <input type="password" id="site-password" placeholder="Password">
+                        </div>
+                        
+                        <div id="password-strength" class="strength-meter"></div>
+                        <div id="breach-warning" class="error"></div>
+                        
+                        <div class="btn-group mt-10">
+                            <button type="button" id="check-breach-btn" class="danger-outline-btn">🚨 Check if Hacked</button>
+                            <button id="add-btn" class="primary-btn">Save Password</button>
+                        </div>
+                        <div id="add-error" class="error"></div>
+                    </div>
                 </div>
             </div>
-            <p class="subtitle">All passwords are encrypted in your browser</p>
 
-
-            <!-- Add Password Form -->
-            <div class="add-form">
-                <h3>Add New Password</h3>
-                
-                <input type="text" id="site-name" placeholder="Site Name (e.g., Google)">
-                <input type="text" id="site-username" placeholder="Username">
-                
-                <!-- Password Input -->
-                <input type="password" id="site-password" placeholder="Password">
-                
-                <!-- 1. Strength Meter Display -->
-                <div id="password-strength" style="margin-top: 5px; font-size: 0.85rem; height: 20px;"></div>
-                
-                <!-- 2. Breach Warning Display -->
-                <div id="breach-warning" style="color: #ff4444; font-size: 0.9rem; margin-top: 5px; margin-bottom: 10px;"></div>
-                
-                <!-- 3. Check Breach Button -->
-                <button type="button" id="check-breach-btn" style="margin-top: 5px; padding: 8px; background: #ff4444; color: white; border: none; border-radius: 5px; cursor: pointer; width: 100%; margin-bottom: 10px;">
-                    🚨 Check if Hacked
-                </button>
-                
-                <!-- 4. Add Button -->
-                <button id="add-btn">Add Password</button>
-                <div id="add-error" class="error"></div>
+            <!-- Right Column: Password List -->
+            <div class="dashboard-column right-col">
+                <div class="card full-height">
+                    <div class="card-header">
+                        <h3>🗂️ My Vault</h3>
+                        <p class="subtitle-small">All data is decrypted locally in your browser.</p>
+                    </div>
+                    <div class="card-body">
+                        <div id="passwords-container" class="vault-list">
+                            <!-- Passwords will load here dynamically -->
+                        </div>
+                    </div>
+                </div>
             </div>
 
-            <!-- Password List -->
-            <div id="password-list">
-                <h3>Saved Passwords</h3>
-                <div id="passwords-container"></div>
-            </div>
-        </div>
+        </main>
     </div>
 
     <script src="script.js"></script>
