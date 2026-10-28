@@ -946,49 +946,37 @@ async function checkPwned(password) {
     }
 }
 
-document.getElementById('check-breach-btn').addEventListener('click', async () => {
-    const pwdInput = document.getElementById('site-password');
-    const warningDiv = document.getElementById('breach-warning');
-    const pwd = pwdInput.value;
-
-    if (!pwd) {
-        warningDiv.textContent = "Please type a password first.";
-        return;
-    }
-
-    warningDiv.textContent = "Checking...";
-    warningDiv.style.color = "#ffaa00";
-
-    const breachCount = await checkPwned(pwd);
-
-    if (breachCount === null) {
-        warningDiv.textContent = "Error connecting to HIBP.";
-        warningDiv.style.color = "#ff4444";
-    } else if (breachCount > 0) {
-        warningDiv.textContent = `⚠️ DANGER: This password has appeared in ${breachCount.toLocaleString()} data breaches! DO NOT USE IT.`;
-        warningDiv.style.color = "#ff4444";
-    } else {
-        warningDiv.textContent = "✅ Good news! This password hasn't been found in any known breaches.";
-        warningDiv.style.color = "#00d4ff";
-    }
-});
-
+// ============================================
+// SECURITY AUDIT: STRENGTH & BREACH CHECK
+// ============================================
 
 const sitePasswordInput = document.getElementById('site-password');
 const strengthDiv = document.getElementById('password-strength');
 const checkBreachBtn = document.getElementById('check-breach-btn');
 const warningDiv = document.getElementById('breach-warning');
 
-// ============================================
-// TEST BUTTON CONNECTION
-// ============================================
-const checkBreachBtn = document.getElementById('check-breach-btn');
-const sitePasswordInput = document.getElementById('site-password');
-const warningDiv = document.getElementById('breach-warning');
+// 1. Real-time Password Strength Meter (zxcvbn)
+if (sitePasswordInput && typeof zxcvbn !== 'undefined') {
+    sitePasswordInput.addEventListener('input', function() {
+        const pwd = this.value;
+        if (!pwd) {
+            strengthDiv.textContent = '';
+            return;
+        }
 
+        const result = zxcvbn(pwd);
+        const score = result.score;
+        const labels = ['Very Weak', 'Weak', 'Fair', 'Strong', 'Very Strong'];
+        const colors = ['#ff4444', '#ffaa00', '#ffdd00', '#88cc00', '#00d4ff'];
+
+        strengthDiv.textContent = `Strength: ${labels[score]}`;
+        strengthDiv.style.color = colors[score];
+    });
+}
+
+// 2. Breach Checker Button
 if (checkBreachBtn) {
     checkBreachBtn.addEventListener('click', async () => {
-        console.log("Button was clicked!"); // This will print in the console
         const pwd = sitePasswordInput.value;
 
         if (!pwd) {
@@ -1000,7 +988,6 @@ if (checkBreachBtn) {
         warningDiv.style.color = "#ffaa00";
 
         const breachCount = await checkPwned(pwd);
-        console.log("Result from API:", breachCount); // This will print the number
 
         if (breachCount === null) {
             warningDiv.textContent = "Error connecting to HIBP.";
@@ -1013,6 +1000,4 @@ if (checkBreachBtn) {
             warningDiv.style.color = "#00d4ff";
         }
     });
-} else {
-    console.error("Could not find the button element! Check your HTML ID.");
 }
