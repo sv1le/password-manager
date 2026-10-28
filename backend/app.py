@@ -538,9 +538,5 @@ def enable_2fa():
         }), 500
     
 if __name__ == '__main__':
-    port = int(os.getenv('PORT', 5000))
-    print("Starting Password Manager API...")
-    print(f" Server running at: http://localhost:{port}")
-    print(f" Health check: http://localhost:{port}/api/health")
-    print("Press CTRL+C to stop")
-    app.run(debug=True, host='0.0.0.0', port=port)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port, debug=True)

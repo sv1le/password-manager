@@ -679,6 +679,27 @@ async function handleDisable2FA() {
     }
 }
 
+function findReusedPasswords(passwords) {
+    const passwordMap = new Map();
+    const reused = [];
+
+    passwords.forEach((item, index) => {
+        const pwd = item.password;
+        if (!pwd) return;
+
+        if (passwordMap.has(pwd)) {
+            // Mark the current and previous occurrence
+            const firstIndex = passwordMap.get(pwd);
+            if (!reused.includes(firstIndex)) reused.push(firstIndex);
+            reused.push(index);
+        } else {
+            passwordMap.set(pwd, index);
+        }
+    });
+
+    return reused; // Returns indices of items using the same password
+}
+
 // ============================================
 // EVENT LISTENERS
 // ============================================
@@ -866,3 +887,147 @@ console.log(' Password Manager Frontend Loaded!');
 console.log(' Backend API:', API_URL);
 console.log(' Zero-Knowledge Architecture Active!');
 console.log(' All encryption happens in your browser!');
+
+const sitePasswordInput = document.getElementById('site-password');
+const strengthDiv = document.getElementById('password-strength');
+
+sitePasswordInput.addEventListener('input', function () {
+    const pwd = this.value;
+    if (!pwd) {
+        strengthDiv.textContent = '';
+        return;
+    }
+
+    const result = zxcvbn(pwd);
+    const score = result.score; // 0 to 4
+    const labels = ['Very Weak', 'Weak', 'Fair', 'Strong', 'Very Strong'];
+    const colors = ['#ff4444', '#ffaa00', '#ffdd00', '#88cc00', '#00d4ff'];
+
+    strengthDiv.textContent = `Strength: ${labels[score]} (Score: ${score}/4)`;
+    strengthDiv.style.color = colors[score];
+
+    // Optional: Show feedback for weak passwords
+    if (result.feedback && result.feedback.warning) {
+        strengthDiv.textContent += ` - ${result.feedback.warning}`;
+    }
+});
+
+
+async function checkPwned(password) {
+    if (!password) return null;
+
+    // 1. SHA-1 hash the password
+    const encoder = new TextEncoder();
+    const data = encoder.encode(password);
+    const hashBuffer = await crypto.subtle.digest('SHA-1', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const fullHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+
+    // 2. Send first 5 chars
+    const prefix = fullHash.substring(0, 5);
+    const suffix = fullHash.substring(5);
+
+    try {
+        const response = await fetch(`https://api.pwnedpasswords.com/range/${prefix}`);
+        const text = await response.text();
+
+        // 3. Check if our suffix is in the results
+        const lines = text.split('\n');
+        for (let line of lines) {
+            const [returnedSuffix, count] = line.split(':');
+            if (returnedSuffix === suffix) {
+                return parseInt(count); // Number of times breached
+            }
+        }
+        return 0; // Not found
+    } catch (error) {
+        console.error('Breach check failed:', error);
+        return null;
+    }
+}
+
+document.getElementById('check-breach-btn').addEventListener('click', async () => {
+    const pwdInput = document.getElementById('site-password');
+    const warningDiv = document.getElementById('breach-warning');
+    const pwd = pwdInput.value;
+
+    if (!pwd) {
+        warningDiv.textContent = "Please type a password first.";
+        return;
+    }
+
+    warningDiv.textContent = "Checking...";
+    warningDiv.style.color = "#ffaa00";
+
+    const breachCount = await checkPwned(pwd);
+
+    if (breachCount === null) {
+        warningDiv.textContent = "Error connecting to HIBP.";
+        warningDiv.style.color = "#ff4444";
+    } else if (breachCount > 0) {
+        warningDiv.textContent = `⚠️ DANGER: This password has appeared in ${breachCount.toLocaleString()} data breaches! DO NOT USE IT.`;
+        warningDiv.style.color = "#ff4444";
+    } else {
+        warningDiv.textContent = "✅ Good news! This password hasn't been found in any known breaches.";
+        warningDiv.style.color = "#00d4ff";
+    }
+});
+
+
+const sitePasswordInput = document.getElementById('site-password');
+const strengthDiv = document.getElementById('password-strength');
+const checkBreachBtn = document.getElementById('check-breach-btn');
+const warningDiv = document.getElementById('breach-warning');
+
+// 1. Real-time Password Strength Meter (zxcvbn)
+if (sitePasswordInput) {
+    sitePasswordInput.addEventListener('input', function() {
+        const pwd = this.value;
+        if (!pwd) {
+            strengthDiv.textContent = '';
+            return;
+        }
+
+        // Check if zxcvbn is loaded
+        if (typeof zxcvbn === 'undefined') {
+            strengthDiv.textContent = "Strength meter unavailable (zxcvbn missing)";
+            return;
+        }
+
+        const result = zxcvbn(pwd);
+        const score = result.score; // 0 to 4
+        const labels = ['Very Weak', 'Weak', 'Fair', 'Strong', 'Very Strong'];
+        const colors = ['#ff4444', '#ffaa00', '#ffdd00', '#88cc00', '#00d4ff'];
+
+        strengthDiv.textContent = `Strength: ${labels[score]}`;
+        strengthDiv.style.color = colors[score];
+    });
+}
+
+// 2. Breach Checker Button
+if (checkBreachBtn) {
+    checkBreachBtn.addEventListener('click', async () => {
+        const pwd = sitePasswordInput.value;
+
+        if (!pwd) {
+            warningDiv.textContent = "Please type a password first.";
+            return;
+        }
+
+        warningDiv.textContent = "Checking...";
+        warningDiv.style.color = "#ffaa00";
+
+        const breachCount = await checkPwned(pwd);
+
+        if (breachCount === null) {
+            warningDiv.textContent = "Error connecting to HIBP.";
+            warningDiv.style.color = "#ff4444";
+        } else if (breachCount > 0) {
+            warningDiv.textContent = `⚠️ DANGER: This password has appeared in ${breachCount.toLocaleString()} data breaches! DO NOT USE IT.`;
+            warningDiv.style.color = "#ff4444";
+        } else {
+            warningDiv.textContent = "✅ Good news! This password hasn't been found in any known breaches.";
+            warningDiv.style.color = "#00d4ff";
+        }
+    });
+}
