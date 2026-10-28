@@ -36,6 +36,12 @@ const addBtn = document.getElementById('add-btn');
 const addError = document.getElementById('add-error');
 const passwordsContainer = document.getElementById('passwords-container');
 
+// Security elements (Strength & Breach)
+const sitePasswordInput = document.getElementById('site-password');
+const strengthDiv = document.getElementById('password-strength');
+const checkBreachBtn = document.getElementById('check-breach-btn');
+const warningDiv = document.getElementById('breach-warning');
+
 // ============================================
 // CRYPTO FUNCTIONS (Web Crypto API)
 // ============================================
@@ -129,96 +135,8 @@ async function decryptData(encryptedHex, iv, key) {
     const decryptedText = decoder.decode(decryptedBuffer);
     return JSON.parse(decryptedText);
 }
-// ============================================
-// 2FA FUNCTIONS
-// ============================================
 
-async function setup2FA() {
-    try {
-        const response = await fetch(`${API_URL}/api/2fa/setup`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${currentToken}`
-            }
-        });
-
-        const data = await response.json();
-        return data;
-    } catch (error) {
-        console.error('2FA setup error:', error);
-        return { status: 'error', message: error.message };
-    }
-}
-
-async function enable2FA(code) {
-    try {
-        const response = await fetch(`${API_URL}/api/2fa/enable`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
-            },
-            body: JSON.stringify({ totp_code: code })
-        });
-
-        const data = await response.json();
-        return data;
-    } catch (error) {
-        console.error('2FA enable error:', error);
-        return { status: 'error', message: error.message };
-    }
-}
-
-// ============================================
-// 2FA UI Functions
-// ============================================
-
-async function load2FAStatus() {
-    // Check if user has 2FA enabled (you'll need to add this to your login response)
-    // For now, we'll check if we have a twofa_enabled flag
-    // You can add this to the login response
-}
-
-async function handleSetup2FA() {
-    const result = await setup2FA();
-
-    if (result.status === 'success') {
-        // Show QR code
-        document.getElementById('qr-code-image').src = `data:image/png;base64,${result.qr_code}`;
-        document.getElementById('twofa-secret').textContent = result.secret;
-        document.getElementById('twofa-setup').style.display = 'block';
-        document.getElementById('setup-2fa-btn').style.display = 'none';
-        document.getElementById('twofa-status-text').textContent = 'Scan QR code with Google Authenticator';
-    } else {
-        document.getElementById('twofa-error').textContent = result.message;
-    }
-}
-
-async function handleEnable2FA() {
-    const code = document.getElementById('twofa-code-input').value;
-
-    if (!code || code.length !== 6) {
-        document.getElementById('twofa-error').textContent = 'Please enter a valid 6-digit code';
-        return;
-    }
-
-    const result = await enable2FA(code);
-
-    if (result.status === 'success') {
-        document.getElementById('twofa-status-text').textContent = '✅ 2FA is ENABLED!';
-        document.getElementById('twofa-setup').style.display = 'none';
-        document.getElementById('disable-2fa-btn').style.display = 'inline-block';
-        document.getElementById('twofa-error').textContent = '';
-        alert('2FA enabled successfully! You\'ll need your authenticator app to login from now on.');
-    } else {
-        document.getElementById('twofa-error').textContent = result.message;
-    }
-}
-// 2FA event listeners
-document.getElementById('setup-2fa-btn').addEventListener('click', handleSetup2FA);
-document.getElementById('enable-2fa-btn').addEventListener('click', handleEnable2FA);
-
-// Hash password for authentication (simplified - in production use proper auth)
+// Hash password for authentication
 async function hashPassword(password) {
     const encoder = new TextEncoder();
     const passwordBuffer = encoder.encode(password);
@@ -228,95 +146,114 @@ async function hashPassword(password) {
 }
 
 // ============================================
+// SECURITY FUNCTIONS (Strength & Breach)
+// ============================================
+
+async function checkPwned(password) {
+    if (!password) return null;
+
+    const encoder = new TextEncoder();
+    const data = encoder.encode(password);
+    const hashBuffer = await crypto.subtle.digest('SHA-1', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const fullHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+
+    const prefix = fullHash.substring(0, 5);
+    const suffix = fullHash.substring(5);
+
+    try {
+        const response = await fetch(`https://api.pwnedpasswords.com/range/${prefix}`);
+        const text = await response.text();
+
+        const lines = text.split('\n');
+        for (let line of lines) {
+            const [returnedSuffix, count] = line.split(':');
+            if (returnedSuffix === suffix) {
+                return parseInt(count);
+            }
+        }
+        return 0;
+    } catch (error) {
+        console.error('Breach check failed:', error);
+        return null;
+    }
+}
+
+function findReusedPasswords(passwords) {
+    const passwordMap = new Map();
+    const reused = [];
+
+    passwords.forEach((item, index) => {
+        const pwd = item.password;
+        if (!pwd) return;
+
+        if (passwordMap.has(pwd)) {
+            const firstIndex = passwordMap.get(pwd);
+            if (!reused.includes(firstIndex)) reused.push(firstIndex);
+            reused.push(index);
+        } else {
+            passwordMap.set(pwd, index);
+        }
+    });
+
+    return reused;
+}
+
+// ============================================
 // AUTH FUNCTIONS
 // ============================================
 
-// Register user
 async function register(email, password) {
     try {
         const passwordHash = await hashPassword(password);
 
         const response = await fetch(`${API_URL}/api/register`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                email: email,
-                password: passwordHash
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: email, password: passwordHash })
         });
 
-        const data = await response.json();
-        return data;
+        return await response.json();
     } catch (error) {
         console.error('Register error:', error);
         return { status: 'error', message: error.message };
     }
 }
-// Login user
+
 async function login(email, password) {
     try {
         const passwordHash = await hashPassword(password);
 
         const response = await fetch(`${API_URL}/api/login`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                email: email,
-                password: passwordHash
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: email, password: passwordHash })
         });
 
         const data = await response.json();
 
-        // ============================================
-        // CHECK IF 2FA IS REQUIRED
-        // ============================================
         if (data.status === '2fa_required') {
-            // Show 2FA popup or input
             const code = prompt('🔐 Enter your 2FA code from Google Authenticator:');
 
             if (code) {
-                // Re-try login with 2FA code
                 const loginWith2FA = await fetch(`${API_URL}/api/login`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        email: email,
-                        password: passwordHash,
-                        totp_code: code
-                    })
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: email, password: passwordHash, totp_code: code })
                 });
 
                 const result2 = await loginWith2FA.json();
-
-                // Return the 2FA login result
                 if (result2.status === 'success') {
                     return result2;
                 } else {
-                    return {
-                        status: 'error',
-                        message: result2.message || 'Invalid 2FA code'
-                    };
+                    return { status: 'error', message: result2.message || 'Invalid 2FA code' };
                 }
             } else {
-                return {
-                    status: 'error',
-                    message: '2FA code is required to login'
-                };
+                return { status: 'error', message: '2FA code is required to login' };
             }
         }
-        // ============================================
-        // END 2FA CHECK
-        // ============================================
 
         return data;
-
     } catch (error) {
         console.error('Login error:', error);
         return { status: 'error', message: error.message };
@@ -324,206 +261,33 @@ async function login(email, password) {
 }
 
 // ============================================
-// VAULT FUNCTIONS
+// 2FA FUNCTIONS & UI
 // ============================================
 
-// Save vault to server
-async function saveVault(encryptedData, iv, salt) {
-    try {
-        const response = await fetch(`${API_URL}/api/vault`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
-            },
-            body: JSON.stringify({
-                encrypted_data: encryptedData,
-                iv: iv,
-                salt: salt
-            })
-        });
-
-        const data = await response.json();
-        return data;
-    } catch (error) {
-        console.error('Save vault error:', error);
-        return { status: 'error', message: error.message };
-    }
-}
-
-// Get vault from server
-async function getVault() {
-    try {
-        const response = await fetch(`${API_URL}/api/vault`, {
-            method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${currentToken}`
-            }
-        });
-
-        const data = await response.json();
-        return data;
-    } catch (error) {
-        console.error('Get vault error:', error);
-        return { status: 'error', message: error.message };
-    }
-}
-
-// ============================================
-// UI FUNCTIONS
-// ============================================
-
-// Show/hide auth/vault sections
-function showAuth() {
-    authSection.style.display = 'block';
-    vaultSection.style.display = 'none';
-}
-
-function showVault() {
-    authSection.style.display = 'none';
-    vaultSection.style.display = 'block';
-}
-
-// Load passwords from vault
-async function loadPasswords() {
-    const result = await getVault();
-
-    if (result.status === 'error') {
-        passwordsContainer.innerHTML = `<div class="error">❌ ${result.message}</div>`;
-        return;
-    }
-
-    if (!result.data) {
-        passwordsContainer.innerHTML = '<div class="empty-state">🔐 No passwords saved yet. Add your first password above!</div>';
-        return;
-    }
-
-    try {
-        // Derive encryption key from master password
-        const salt = result.data.salt;
-        const key = await deriveKey(masterPassword, salt);
-
-        // Decrypt the data
-        const decrypted = await decryptData(result.data.encrypted_data, result.data.iv, key);
-
-        // Display passwords
-        if (decrypted.length === 0) {
-            passwordsContainer.innerHTML = '<div class="empty-state">🔐 No passwords saved yet. Add your first password above!</div>';
-            return;
-        }
-
-        passwordsContainer.innerHTML = '';
-        decrypted.forEach((item, index) => {
-            const div = document.createElement('div');
-            div.className = 'password-item';
-            div.innerHTML = `
-                <div class="info">
-                    <div class="site">🌐 ${item.site}</div>
-                    <div class="username">👤 ${item.username}</div>
-                    <div class="password" id="password-${index}">••••••••</div>
-                </div>
-                <div class="actions">
-                    <button class="show-btn" data-index="${index}">Show</button>
-                    <button class="delete-btn" data-index="${index}">Delete</button>
-                </div>
-            `;
-            passwordsContainer.appendChild(div);
-        });
-
-        // Add event listeners for show/hide
-        document.querySelectorAll('.show-btn').forEach(btn => {
-            btn.addEventListener('click', function () {
-                const index = parseInt(this.dataset.index);
-                const passwordEl = document.getElementById(`password-${index}`);
-                if (passwordEl.textContent === '••••••••') {
-                    passwordEl.textContent = decrypted[index].password;
-                    this.textContent = 'Hide';
-                } else {
-                    passwordEl.textContent = '••••••••';
-                    this.textContent = 'Show';
-                }
-            });
-        });
-
-        // Add event listeners for delete
-        document.querySelectorAll('.delete-btn').forEach(btn => {
-            btn.addEventListener('click', async function () {
-                const index = parseInt(this.dataset.index);
-                if (confirm(`Delete password for "${decrypted[index].site}"?`)) {
-                    decrypted.splice(index, 1);
-                    await saveAndReload(decrypted);
-                }
-            });
-        });
-
-    } catch (error) {
-        console.error('Decryption error:', error);
-        passwordsContainer.innerHTML = '<div class="error">❌ Failed to decrypt vault. Wrong master password?</div>';
-    }
-    await load2FAStatus();
-}
-
-// Save and reload passwords
-async function saveAndReload(passwords) {
-    try {
-        const salt = generateSalt();
-        const key = await deriveKey(masterPassword, salt);
-        const { encrypted, iv } = await encryptData(passwords, key);
-
-        const result = await saveVault(encrypted, iv, salt);
-        if (result.status === 'success') {
-            await loadPasswords();
-        } else {
-            addError.textContent = '❌ Failed to save password';
-            setTimeout(() => addError.textContent = '', 3000);
-        }
-    } catch (error) {
-        console.error('Save error:', error);
-        addError.textContent = '❌ Failed to save password';
-        setTimeout(() => addError.textContent = '', 3000);
-    }
-}
-// ============================================
-// 2FA FUNCTIONS
-// ============================================
-
-// Check 2FA status for current user
 async function check2FAStatus() {
     try {
         const response = await fetch(`${API_URL}/api/2fa/status`, {
             method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${currentToken}`
-            }
+            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
-
-        const data = await response.json();
-        return data;
+        return await response.json();
     } catch (error) {
-        console.error('Check 2FA status error:', error);
         return { status: 'error', message: error.message };
     }
 }
 
-// Setup 2FA (get QR code and secret)
 async function setup2FA() {
     try {
         const response = await fetch(`${API_URL}/api/2fa/setup`, {
             method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${currentToken}`
-            }
+            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
-
-        const data = await response.json();
-        return data;
+        return await response.json();
     } catch (error) {
-        console.error('2FA setup error:', error);
         return { status: 'error', message: error.message };
     }
 }
 
-// Enable 2FA (verify code and enable)
 async function enable2FA(code) {
     try {
         const response = await fetch(`${API_URL}/api/2fa/enable`, {
@@ -534,25 +298,19 @@ async function enable2FA(code) {
             },
             body: JSON.stringify({ totp_code: code })
         });
-
-        const data = await response.json();
-        return data;
+        return await response.json();
     } catch (error) {
-        console.error('2FA enable error:', error);
         return { status: 'error', message: error.message };
     }
 }
 
-// ============================================
-// 2FA UI FUNCTIONS
-// ============================================
-
-// Load 2FA status when vault loads
 async function load2FAStatus() {
     const statusText = document.getElementById('twofa-status-text');
     const setupBtn = document.getElementById('setup-2fa-btn');
     const disableBtn = document.getElementById('disable-2fa-btn');
     const setupDiv = document.getElementById('twofa-setup');
+
+    if (!statusText) return;
 
     try {
         const result = await check2FAStatus();
@@ -572,23 +330,21 @@ async function load2FAStatus() {
                 setupDiv.style.display = 'none';
             }
         } else {
-            statusText.textContent = ' Could not load 2FA status';
+            statusText.textContent = '⚠️ Could not load 2FA status';
             statusText.style.color = '#ffaa00';
         }
     } catch (error) {
-        console.error('Load 2FA status error:', error);
-        statusText.textContent = ' Error loading 2FA status';
+        statusText.textContent = '❌ Error loading 2FA status';
     }
 }
 
-// Handle Setup 2FA button click
 async function handleSetup2FA() {
     const setupBtn = document.getElementById('setup-2fa-btn');
     const setupDiv = document.getElementById('twofa-setup');
     const statusText = document.getElementById('twofa-status-text');
     const errorDiv = document.getElementById('twofa-error');
 
-    setupBtn.textContent = ' Generating...';
+    setupBtn.textContent = '⏳ Generating...';
     setupBtn.disabled = true;
     errorDiv.textContent = '';
 
@@ -598,7 +354,6 @@ async function handleSetup2FA() {
     setupBtn.disabled = false;
 
     if (result.status === 'success') {
-        // Show QR code
         document.getElementById('qr-code-image').src = `data:image/png;base64,${result.qr_code}`;
         document.getElementById('twofa-secret').textContent = result.secret;
         setupDiv.style.display = 'block';
@@ -611,7 +366,6 @@ async function handleSetup2FA() {
     }
 }
 
-// Handle Enable 2FA button click
 async function handleEnable2FA() {
     const codeInput = document.getElementById('twofa-code-input');
     const code = codeInput.value.trim();
@@ -648,20 +402,14 @@ async function handleEnable2FA() {
     }
 }
 
-// Handle Disable 2FA button click
 async function handleDisable2FA() {
-    if (!confirm('Are you sure you want to disable 2FA?\n\nYour account will be less secure!')) {
-        return;
-    }
+    if (!confirm('Are you sure you want to disable 2FA?\n\nYour account will be less secure!')) return;
 
     try {
         const response = await fetch(`${API_URL}/api/2fa/disable`, {
             method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${currentToken}`
-            }
+            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
-
         const result = await response.json();
 
         if (result.status === 'success') {
@@ -674,47 +422,203 @@ async function handleDisable2FA() {
             alert('Failed to disable 2FA: ' + result.message);
         }
     } catch (error) {
-        console.error('Disable 2FA error:', error);
         alert('Error disabling 2FA');
     }
 }
 
-function findReusedPasswords(passwords) {
-    const passwordMap = new Map();
-    const reused = [];
+// ============================================
+// VAULT FUNCTIONS
+// ============================================
 
-    passwords.forEach((item, index) => {
-        const pwd = item.password;
-        if (!pwd) return;
+async function saveVault(encryptedData, iv, salt) {
+    try {
+        const response = await fetch(`${API_URL}/api/vault`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${currentToken}`
+            },
+            body: JSON.stringify({
+                encrypted_data: encryptedData,
+                iv: iv,
+                salt: salt
+            })
+        });
+        return await response.json();
+    } catch (error) {
+        return { status: 'error', message: error.message };
+    }
+}
 
-        if (passwordMap.has(pwd)) {
-            // Mark the current and previous occurrence
-            const firstIndex = passwordMap.get(pwd);
-            if (!reused.includes(firstIndex)) reused.push(firstIndex);
-            reused.push(index);
-        } else {
-            passwordMap.set(pwd, index);
+async function getVault() {
+    try {
+        const response = await fetch(`${API_URL}/api/vault`, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${currentToken}` }
+        });
+        return await response.json();
+    } catch (error) {
+        return { status: 'error', message: error.message };
+    }
+}
+
+// ============================================
+// UI FUNCTIONS
+// ============================================
+
+function showAuth() {
+    authSection.style.display = 'block';
+    vaultSection.style.display = 'none';
+}
+
+function showVault() {
+    authSection.style.display = 'none';
+    vaultSection.style.display = 'block';
+}
+
+async function loadPasswords() {
+    const result = await getVault();
+
+    if (result.status === 'error') {
+        passwordsContainer.innerHTML = `<div class="error">❌ ${result.message}</div>`;
+        return;
+    }
+
+    if (!result.data) {
+        passwordsContainer.innerHTML = '<div class="empty-state">🔐 No passwords saved yet. Add your first password above!</div>';
+        return;
+    }
+
+    try {
+        const salt = result.data.salt;
+        const key = await deriveKey(masterPassword, salt);
+        const decrypted = await decryptData(result.data.encrypted_data, result.data.iv, key);
+
+        if (decrypted.length === 0) {
+            passwordsContainer.innerHTML = '<div class="empty-state">🔐 No passwords saved yet. Add your first password above!</div>';
+            return;
         }
-    });
 
-    return reused; // Returns indices of items using the same password
+        passwordsContainer.innerHTML = '';
+        decrypted.forEach((item, index) => {
+            const div = document.createElement('div');
+            div.className = 'password-item';
+            div.innerHTML = `
+                <div class="info">
+                    <div class="site">🌐 ${item.site}</div>
+                    <div class="username">👤 ${item.username}</div>
+                    <div class="password" id="password-${index}">••••••••</div>
+                </div>
+                <div class="actions">
+                    <button class="show-btn" data-index="${index}">Show</button>
+                    <button class="delete-btn" data-index="${index}">Delete</button>
+                </div>
+            `;
+            passwordsContainer.appendChild(div);
+        });
+
+        document.querySelectorAll('.show-btn').forEach(btn => {
+            btn.addEventListener('click', function () {
+                const index = parseInt(this.dataset.index);
+                const passwordEl = document.getElementById(`password-${index}`);
+                if (passwordEl.textContent === '••••••••') {
+                    passwordEl.textContent = decrypted[index].password;
+                    this.textContent = 'Hide';
+                } else {
+                    passwordEl.textContent = '••••••••';
+                    this.textContent = 'Show';
+                }
+            });
+        });
+
+        document.querySelectorAll('.delete-btn').forEach(btn => {
+            btn.addEventListener('click', async function () {
+                const index = parseInt(this.dataset.index);
+                if (confirm(`Delete password for "${decrypted[index].site}"?`)) {
+                    decrypted.splice(index, 1);
+                    await saveAndReload(decrypted);
+                }
+            });
+        });
+
+    } catch (error) {
+        passwordsContainer.innerHTML = '<div class="error">❌ Failed to decrypt vault. Wrong master password?</div>';
+    }
+    await load2FAStatus();
+}
+
+async function saveAndReload(passwords) {
+    try {
+        const salt = generateSalt();
+        const key = await deriveKey(masterPassword, salt);
+        const { encrypted, iv } = await encryptData(passwords, key);
+        const result = await saveVault(encrypted, iv, salt);
+        
+        if (result.status === 'success') {
+            await loadPasswords();
+        } else {
+            addError.textContent = '❌ Failed to save password';
+            setTimeout(() => addError.textContent = '', 3000);
+        }
+    } catch (error) {
+        addError.textContent = '❌ Failed to save password';
+        setTimeout(() => addError.textContent = '', 3000);
+    }
 }
 
 // ============================================
 // EVENT LISTENERS
 // ============================================
+
 // 2FA Event Listeners
 document.getElementById('setup-2fa-btn').addEventListener('click', handleSetup2FA);
 document.getElementById('enable-2fa-btn').addEventListener('click', handleEnable2FA);
 document.getElementById('disable-2fa-btn').addEventListener('click', handleDisable2FA);
-
-// Enter key support for 2FA code input
 document.getElementById('twofa-code-input').addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') {
-        document.getElementById('enable-2fa-btn').click();
-    }
+    if (e.key === 'Enter') document.getElementById('enable-2fa-btn').click();
 });
-// Show register form
+
+// Security Event Listeners (Strength & Breach)
+if (sitePasswordInput && typeof zxcvbn !== 'undefined') {
+    sitePasswordInput.addEventListener('input', function() {
+        const pwd = this.value;
+        if (!pwd) {
+            strengthDiv.textContent = '';
+            return;
+        }
+        const result = zxcvbn(pwd);
+        const score = result.score;
+        const labels = ['Very Weak', 'Weak', 'Fair', 'Strong', 'Very Strong'];
+        const colors = ['#ff4444', '#ffaa00', '#ffdd00', '#88cc00', '#00d4ff'];
+        strengthDiv.textContent = `Strength: ${labels[score]}`;
+        strengthDiv.style.color = colors[score];
+    });
+}
+
+if (checkBreachBtn) {
+    checkBreachBtn.addEventListener('click', async () => {
+        const pwd = sitePasswordInput.value;
+        if (!pwd) {
+            warningDiv.textContent = "Please type a password first.";
+            return;
+        }
+        warningDiv.textContent = "Checking...";
+        warningDiv.style.color = "#ffaa00";
+        const breachCount = await checkPwned(pwd);
+        if (breachCount === null) {
+            warningDiv.textContent = "Error connecting to HIBP.";
+            warningDiv.style.color = "#ff4444";
+        } else if (breachCount > 0) {
+            warningDiv.textContent = `⚠️ DANGER: This password has appeared in ${breachCount.toLocaleString()} data breaches! DO NOT USE IT.`;
+            warningDiv.style.color = "#ff4444";
+        } else {
+            warningDiv.textContent = "✅ Good news! This password hasn't been found in any known breaches.";
+            warningDiv.style.color = "#00d4ff";
+        }
+    });
+}
+
+// Auth Form Toggles
 showRegister.addEventListener('click', (e) => {
     e.preventDefault();
     loginForm.style.display = 'none';
@@ -723,7 +627,6 @@ showRegister.addEventListener('click', (e) => {
     registerError.textContent = '';
 });
 
-// Show login form
 showLogin.addEventListener('click', (e) => {
     e.preventDefault();
     registerForm.style.display = 'none';
@@ -745,15 +648,13 @@ registerBtn.addEventListener('click', async () => {
 
     registerBtn.textContent = '⏳ Registering...';
     registerBtn.disabled = true;
-
     const result = await register(email, password);
-
     registerBtn.textContent = 'Register';
     registerBtn.disabled = false;
 
     if (result.status === 'success') {
         registerError.style.color = '#00d4ff';
-        registerError.textContent = ' Registration successful! Please login.';
+        registerError.textContent = '✅ Registration successful! Please login.';
         setTimeout(() => {
             registerError.textContent = '';
             registerError.style.color = '#ff4444';
@@ -775,24 +676,21 @@ loginBtn.addEventListener('click', async () => {
     const password = loginPassword.value;
 
     if (!email || !password) {
-        loginError.textContent = ' Please fill in all fields';
+        loginError.textContent = '⚠️ Please fill in all fields';
         setTimeout(() => loginError.textContent = '', 3000);
         return;
     }
 
     loginBtn.textContent = '⏳ Logging in...';
     loginBtn.disabled = true;
-
     const result = await login(email, password);
-
     loginBtn.textContent = 'Login';
     loginBtn.disabled = false;
 
     if (result.status === 'success') {
         currentToken = result.token;
         currentUser = result.user;
-        masterPassword = password; // Store for encryption/decryption
-
+        masterPassword = password; 
         showVault();
         await loadPasswords();
     } else {
@@ -808,7 +706,7 @@ addBtn.addEventListener('click', async () => {
     const password = sitePassword.value;
 
     if (!site || !username || !password) {
-        addError.textContent = ' Please fill in all fields';
+        addError.textContent = '⚠️ Please fill in all fields';
         setTimeout(() => addError.textContent = '', 3000);
         return;
     }
@@ -817,7 +715,6 @@ addBtn.addEventListener('click', async () => {
     addBtn.disabled = true;
 
     try {
-        // Get current passwords
         const result = await getVault();
         let passwords = [];
 
@@ -826,10 +723,8 @@ addBtn.addEventListener('click', async () => {
             passwords = await decryptData(result.data.encrypted_data, result.data.iv, key);
         }
 
-        // Add new password
         passwords.push({ site, username, password });
 
-        // Save updated vault
         const salt = generateSalt();
         const key = await deriveKey(masterPassword, salt);
         const { encrypted, iv } = await encryptData(passwords, key);
@@ -840,13 +735,14 @@ addBtn.addEventListener('click', async () => {
             siteName.value = '';
             siteUsername.value = '';
             sitePassword.value = '';
+            strengthDiv.textContent = '';
+            warningDiv.textContent = '';
             await loadPasswords();
         } else {
             addError.textContent = '❌ Failed to save password';
             setTimeout(() => addError.textContent = '', 3000);
         }
     } catch (error) {
-        console.error('Add password error:', error);
         addError.textContent = '❌ Failed to save password';
         setTimeout(() => addError.textContent = '', 3000);
     }
@@ -883,121 +779,5 @@ sitePassword.addEventListener('keypress', (e) => {
 // INITIALIZATION
 // ============================================
 showAuth();
-console.log(' Password Manager Frontend Loaded!');
-console.log(' Backend API:', API_URL);
-console.log(' Zero-Knowledge Architecture Active!');
-console.log(' All encryption happens in your browser!');
-
-
-
-
-sitePasswordInput.addEventListener('input', function () {
-    const pwd = this.value;
-    if (!pwd) {
-        strengthDiv.textContent = '';
-        return;
-    }
-
-    const result = zxcvbn(pwd);
-    const score = result.score; // 0 to 4
-    const labels = ['Very Weak', 'Weak', 'Fair', 'Strong', 'Very Strong'];
-    const colors = ['#ff4444', '#ffaa00', '#ffdd00', '#88cc00', '#00d4ff'];
-
-    strengthDiv.textContent = `Strength: ${labels[score]} (Score: ${score}/4)`;
-    strengthDiv.style.color = colors[score];
-
-    // Optional: Show feedback for weak passwords
-    if (result.feedback && result.feedback.warning) {
-        strengthDiv.textContent += ` - ${result.feedback.warning}`;
-    }
-});
-
-
-async function checkPwned(password) {
-    if (!password) return null;
-
-    // 1. SHA-1 hash the password
-    const encoder = new TextEncoder();
-    const data = encoder.encode(password);
-    const hashBuffer = await crypto.subtle.digest('SHA-1', data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const fullHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
-
-    // 2. Send first 5 chars
-    const prefix = fullHash.substring(0, 5);
-    const suffix = fullHash.substring(5);
-
-    try {
-        const response = await fetch(`https://api.pwnedpasswords.com/range/${prefix}`);
-        const text = await response.text();
-
-        // 3. Check if our suffix is in the results
-        const lines = text.split('\n');
-        for (let line of lines) {
-            const [returnedSuffix, count] = line.split(':');
-            if (returnedSuffix === suffix) {
-                return parseInt(count); // Number of times breached
-            }
-        }
-        return 0; // Not found
-    } catch (error) {
-        console.error('Breach check failed:', error);
-        return null;
-    }
-}
-
-// ============================================
-// SECURITY AUDIT: STRENGTH & BREACH CHECK
-// ============================================
-
-const sitePasswordInput = document.getElementById('site-password');
-const strengthDiv = document.getElementById('password-strength');
-const checkBreachBtn = document.getElementById('check-breach-btn');
-const warningDiv = document.getElementById('breach-warning');
-
-// 1. Real-time Password Strength Meter (zxcvbn)
-if (sitePasswordInput && typeof zxcvbn !== 'undefined') {
-    sitePasswordInput.addEventListener('input', function() {
-        const pwd = this.value;
-        if (!pwd) {
-            strengthDiv.textContent = '';
-            return;
-        }
-
-        const result = zxcvbn(pwd);
-        const score = result.score;
-        const labels = ['Very Weak', 'Weak', 'Fair', 'Strong', 'Very Strong'];
-        const colors = ['#ff4444', '#ffaa00', '#ffdd00', '#88cc00', '#00d4ff'];
-
-        strengthDiv.textContent = `Strength: ${labels[score]}`;
-        strengthDiv.style.color = colors[score];
-    });
-}
-
-// 2. Breach Checker Button
-if (checkBreachBtn) {
-    checkBreachBtn.addEventListener('click', async () => {
-        const pwd = sitePasswordInput.value;
-
-        if (!pwd) {
-            warningDiv.textContent = "Please type a password first.";
-            return;
-        }
-
-        warningDiv.textContent = "Checking...";
-        warningDiv.style.color = "#ffaa00";
-
-        const breachCount = await checkPwned(pwd);
-
-        if (breachCount === null) {
-            warningDiv.textContent = "Error connecting to HIBP.";
-            warningDiv.style.color = "#ff4444";
-        } else if (breachCount > 0) {
-            warningDiv.textContent = `⚠️ DANGER: This password has appeared in ${breachCount.toLocaleString()} data breaches! DO NOT USE IT.`;
-            warningDiv.style.color = "#ff4444";
-        } else {
-            warningDiv.textContent = "✅ Good news! This password hasn't been found in any known breaches.";
-            warningDiv.style.color = "#00d4ff";
-        }
-    });
-}
+console.log('🔐 Password Manager Frontend Loaded!');
+console.log('📡 Backend API:', API_URL);
