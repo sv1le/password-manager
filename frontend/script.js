@@ -144,7 +144,46 @@ async function hashPassword(password) {
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
+// ============================================
+// RSA KEY GENERATION (For Sharing)
+// ============================================
+async function generateRSAKeyPair(email) {
+    // Check if we already have keys for this user to avoid regenerating
+    if (localStorage.getItem(`pubKey_${email}`)) {
+        console.log("RSA keys already exist for this user.");
+        return;
+    }
 
+    console.log("Generating new RSA keys for " + email + "...");
+
+    try {
+        const keyPair = await crypto.subtle.generateKey(
+            {
+                name: "RSA-OAEP",
+                modulusLength: 2048,
+                publicExponent: new Uint8Array([1, 0, 1]),
+                hash: "SHA-256",
+            },
+            true, // extractable
+            ["encrypt", "decrypt"]
+        );
+
+        // Export keys to base64 for storage
+        const publicKey = await crypto.subtle.exportKey("spki", keyPair.publicKey);
+        const privateKey = await crypto.subtle.exportKey("pkcs8", keyPair.privateKey);
+        
+        const pubBase64 = btoa(String.fromCharCode(...new Uint8Array(publicKey)));
+        const privBase64 = btoa(String.fromCharCode(...new Uint8Array(privateKey)));
+
+        // Save to localStorage
+        localStorage.setItem(`pubKey_${email}`, pubBase64);
+        localStorage.setItem(`privKey_${email}`, privBase64);
+        
+        console.log("✅ RSA Keys generated and saved to localStorage!");
+    } catch (error) {
+        console.error("❌ Failed to generate RSA keys:", error);
+    }
+}
 
 // ============================================
 // RSA KEY GENERATION (For Sharing)
