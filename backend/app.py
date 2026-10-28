@@ -12,9 +12,23 @@ from io import BytesIO
 import base64
 from bson import ObjectId
 import uuid
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 # Initialize Flask app
 app = Flask(__name__)
+app = Flask(__name__)
+CORS(app, origins=Config.CORS_ORIGINS)
+
+# ============================================
+# RATE LIMITING SETUP
+# ============================================
+limiter = Limiter(
+    key_func=get_remote_address,
+    app=app,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://"
+)
 CORS(app, origins=Config.CORS_ORIGINS)
 
 # MongoDB connection
@@ -42,6 +56,7 @@ def health_check():
 # AUTHENTICATION APIS
 # ============================================
 @app.route('/api/register', methods=['POST'])
+@limiter.limit("5 per minute")  
 def register():
     try:
         data = request.get_json()
@@ -73,6 +88,7 @@ def register():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/login', methods=['POST'])
+@limiter.limit("5 per minute")  
 def login():
     try:
         if not request.is_json:
