@@ -11,7 +11,7 @@ import qrcode         # ← NEW for QR code
 from io import BytesIO
 import base64
 from bson import ObjectId  # ← ADD THIS
-
+import uuid
 # Initialize Flask app
 app = Flask(__name__)
 CORS(app, origins=Config.CORS_ORIGINS)
@@ -22,7 +22,11 @@ client = MongoClient(Config.MONGO_URI)
 db = client[Config.DB_NAME]
 users_collection = db['users']
 vaults_collection = db['vaults']
+# Create shares collection
+shares_collection = db['shares']
 
+# Create a TTL (Time-To-Live) index so MongoDB auto-deletes expired shares
+shares_collection.create_index("expires_at", expireAfterSeconds=0)
 # ... (rest of your APIs stay the same)
 
 # ============================================
@@ -541,7 +545,61 @@ def enable_2fa():
             'status': 'error',
             'message': str(e)
         }), 500
-    
+# ============================================
+# SHARING APIs
+# ============================================
+@app.route('/api/share', methods=['POST'])
+def create_share():
+    try:
+        # Authenticate sender
+        token = request.headers.get('Authorization')
+        if not token: return jsonify({'status': 'error', 'message': 'Auth required'}), 401
+        if token.startswith('Bearer '): token = token[7:]
+        
+        user_id = verify_token(token)
+        if not user_id: return jsonify({'status': 'error', 'message': 'Invalid token'}), 401
+
+        data = request.get_json()
+        shared_blob = data.get('shared_blob')
+        receiver_email = data.get('receiver_email')
+        hours_valid = data.get('hours_valid', 24) # Default 24 hours
+
+        # Create the share record
+        share_id = str(uuid.uuid4())
+        expires_at = datetime.utcnow() + timedelta(hours=hours_valid)
+
+        shares_collection.insert_one({
+            '_id': share_id,
+            'sender_id': user_id,
+            'receiver_email': receiver_email,
+            'shared_blob': shared_blob,
+            'expires_at': expires_at
+        })
+
+        return jsonify({
+            'status': 'success',
+            'share_url': f"https://password-manager-personal-7075.vercel.app/share.html?id={share_id}"
+        }), 201
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/share/<share_id>', methods=['GET'])
+def get_share(share_id):
+    try:
+        share = shares_collection.find_one({'_id': share_id})
+        
+        if not share:
+            return jsonify({'status': 'error', 'message': 'Share not found or expired'}), 404
+            
+        return jsonify({
+            'status': 'success',
+            'data': {
+                'shared_blob': share['shared_blob'],
+                'receiver_email': share['receiver_email']
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500    
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=True)

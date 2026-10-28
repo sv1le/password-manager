@@ -582,6 +582,7 @@ async function loadPasswords() {
                 </div>
                 <div class="actions">
                     <button class="show-btn" data-index="${index}">Show</button>
+                    <button class="share-btn" data-index="${index}" style="background: #00d4ff; color: #fff;">Share</button>
                     <button class="delete-btn" data-index="${index}">Delete</button>
                 </div>
             `;
@@ -609,6 +610,47 @@ async function loadPasswords() {
                     decrypted.splice(index, 1);
                     await saveAndReload(decrypted);
                 }
+            });
+        });
+                // Add event listeners for share
+        document.querySelectorAll('.share-btn').forEach(btn => {
+            btn.addEventListener('click', async function () {
+                const index = parseInt(this.dataset.index);
+                const itemToShare = decrypted[index];
+                
+                // Ask for the receiver's public key
+                const receiverPubKey = prompt("Paste the receiver's Public Key here:");
+                if (!receiverPubKey) return;
+
+                // Encrypt the share
+                const sharedBlobString = await createSecureShare(itemToShare, receiverPubKey);
+
+                // Send to backend
+                try {
+                    this.textContent = "Sharing...";
+                    const response = await fetch(`${API_URL}/api/share`, {
+                        method: 'POST',
+                        headers: { 
+                            'Content-Type': 'application/json', 
+                            'Authorization': `Bearer ${currentToken}` 
+                        },
+                        body: JSON.stringify({ 
+                            shared_blob: sharedBlobString, 
+                            receiver_email: "receiver@test.com", // We can ignore this for demo
+                            hours_valid: 24 
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    if (data.status === 'success') {
+                        alert(`✅ Share link created successfully!\n\nCopy this link and send it to the receiver:\n\n${data.share_url}`);
+                    } else {
+                        alert("❌ Failed to share: " + data.message);
+                    }
+                } catch (error) {
+                    alert("❌ Error sharing password.");
+                }
+                this.textContent = "Share";
             });
         });
 
@@ -889,6 +931,49 @@ async function createSecureShare(itemToShare, receiverPublicKeyBase64) {
         encryptedData: btoa(String.fromCharCode(...new Uint8Array(encryptedData))),
         encryptedKey: btoa(String.fromCharCode(...new Uint8Array(encryptedAesKey))),
         iv: btoa(String.fromCharCode(...iv))
+    };
+
+    return JSON.stringify(shareBlob);
+}
+
+
+// ============================================
+// RSA SHARING ENCRYPTION
+// ============================================
+async function createSecureShare(itemToShare, receiverPublicKeyBase64) {
+    // 1. Create a random AES key for this specific share
+    const aesKey = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
+    
+    // 2. Encrypt the password data with the AES key
+    const encoder = new TextEncoder();
+    const dataBuffer = encoder.encode(JSON.stringify(itemToShare));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    
+    const encryptedData = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, aesKey, dataBuffer);
+    
+    // 3. Export the AES key and encrypt it with User B's RSA Public Key
+    const rawAesKey = await crypto.subtle.exportKey("raw", aesKey);
+    const receiverPubKeyBuffer = Uint8Array.from(atob(receiverPublicKeyBase64), c => c.charCodeAt(0));
+    
+    const receiverPubKey = await crypto.subtle.importKey(
+        "spki",
+        receiverPubKeyBuffer,
+        { name: "RSA-OAEP", hash: "SHA-256" },
+        false,
+        ["encrypt"]
+    );
+
+    const encryptedAesKey = await crypto.subtle.encrypt(
+        { name: "RSA-OAEP" },
+        receiverPubKey,
+        rawAesKey
+    );
+
+    // 4. Package it all together into one "Blob" to send to the server
+    const shareBlob = {
+        encryptedData: btoa(String.fromCharCode(...new Uint8Array(encryptedData))),
+        encryptedKey: btoa(String.fromCharCode(...new Uint8Array(encryptedAesKey))),
+        iv: btoa(String.fromCharCode(...new Uint8Array(iv)))
     };
 
     return JSON.stringify(shareBlob);
