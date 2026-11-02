@@ -428,7 +428,11 @@ function showVault() {
 
 async function loadPasswords() {
     const result = await getVault();
-    if (result.status === 'error' || !result.data) {
+
+    // [FIX] getVault() now returns status:'not_found' (HTTP 404) when the user
+    // has no vault row yet. Treat that the same as an empty vault — the caller
+    // (login handler) is responsible for bootstrapping an empty encrypted vault.
+    if (result.status === 'error' || result.status === 'not_found' || !result.data) {
         passwordsContainer.innerHTML = '<div class="empty-state">🔐 No passwords saved yet.</div>';
         return;
     }
@@ -880,9 +884,6 @@ async function claimSwitch(senderId, senderEmail) {
 /**
  * Render claimed vault contents in a modal-ish overlay.
  */
-/**
- * Render claimed vault contents in a modal-ish overlay.
- */
 function showClaimedVault(senderEmail, recoveredMasterPassword, vaultPasswords) {
     const overlay = document.createElement('div');
     overlay.style.cssText =
@@ -1110,6 +1111,16 @@ if (loginBtn) {
 
             showVault();
             await loadPasswords();
+
+            // [FIX] Bootstrap an empty encrypted vault on first login so the
+            // demo always has a ciphertext row in db.vaults. app.py now returns
+            // status:'not_found' (HTTP 404) from GET /api/vault when no row
+            // exists; we react to that by writing an encrypted [] via the real
+            // PBKDF2 → AES-GCM path, so the narration stays honest.
+            const existing = await getVault();
+            if (existing.status === 'not_found') {
+                await saveAndReload([]);
+            }
 
             // Check once immediately, then start polling
             await checkTriggeredSwitches();
