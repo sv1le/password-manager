@@ -17,7 +17,6 @@ from flask_limiter.util import get_remote_address
 
 # Initialize Flask app
 app = Flask(__name__)
-app = Flask(__name__)
 CORS(app, origins=Config.CORS_ORIGINS)
 
 # ============================================
@@ -29,7 +28,6 @@ limiter = Limiter(
     default_limits=["200 per day", "50 per hour"],
     storage_uri="memory://"
 )
-CORS(app, origins=Config.CORS_ORIGINS)
 
 # MongoDB connection
 client = MongoClient(Config.MONGO_URI)
@@ -78,7 +76,8 @@ def register():
             'created_at': datetime.now(),
             'updated_at': datetime.now(),
             'twofa_secret': None,
-            'twofa_enabled': False
+            'twofa_enabled': False,
+            'last_login': datetime.utcnow()
         }
         
         result = users_collection.insert_one(user)
@@ -118,11 +117,13 @@ def login():
             totp = pyotp.TOTP(secret)
             if not totp.verify(totp_code):
                 return jsonify({'status': 'error', 'message': 'Invalid 2FA code'}), 401
-                # Update last login timestamp for Dead Man's Switch
+                
+        # Update last login timestamp for Dead Man's Switch
         users_collection.update_one(
             {'email': email},
             {'$set': {'last_login': datetime.utcnow()}}
         )
+        
         # Generate JWT token
         token_data = {
             'user_id': str(user['_id']),
@@ -351,10 +352,9 @@ def get_share(share_id):
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
-
+# ============================================
+# RECOVERY KIT API
+# ============================================
 @app.route('/api/recovery/setup', methods=['POST'])
 def setup_recovery():
     try:
@@ -439,3 +439,10 @@ def check_switch():
         return jsonify({'status': 'success', 'triggered_switches': results}), 200
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+# ============================================
+# RUN THE SERVER
+# ============================================
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port, debug=True)
