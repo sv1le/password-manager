@@ -137,7 +137,7 @@ async function createSecureShare(itemToShare, receiverPublicKeyBase64) {
     const rawAesKey = await crypto.subtle.exportKey("raw", aesKey);
     
     // CRITICAL FIX: Strip out any hidden spaces or newlines
-    const cleanKey = receiverPublicKeyBase64.replace(/\s+/g, ''); 
+    const cleanKey = receiverPublicKeyBase64.replace(/['"\s]+/g, ''); 
     const receiverPubKeyBuffer = Uint8Array.from(atob(cleanKey), c => c.charCodeAt(0));
     
     const receiverPubKey = await crypto.subtle.importKey(
@@ -525,9 +525,169 @@ async function saveAndReload(passwords) {
 }
 
 // ============================================
+// RECOVERY KIT FUNCTIONS
+// ============================================
+function generateRecoveryKey() {
+    const array = new Uint8Array(16);
+    crypto.getRandomValues(array);
+    return Array.from(array).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
+document.getElementById('recovery-btn').addEventListener('click', async () => {
+    const recoveryKey = generateRecoveryKey();
+    const salt = generateSalt();
+    const recoveryCryptoKey = await deriveKey(recoveryKey, salt);
+    
+    const encoder = new TextEncoder();
+    const dataBuffer = encoder.encode(masterPassword);
+    const iv = generateIV();
+    const ivBuffer = new Uint8Array(iv.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+    
+    const encryptedBuffer = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: ivBuffer },
+        recoveryCryptoKey,
+        dataBuffer
+    );
+    
+    const encryptedArray = new Uint8Array(encryptedBuffer);
+    const encryptedHex = Array.from(encryptedArray).map(b => b.toString(16).padStart(2, '0')).join('');
+    const blob = JSON.stringify({ encrypted: encryptedHex, iv: iv, salt: salt });
+    
+    try {
+        const response = await fetch(`${API_URL}/api/recovery/setup`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentToken}` },
+            body: JSON.stringify({ encrypted_master_password: blob })
+        });
+        
+        if (response.ok) {
+            const printWindow = window.open('', '_blank');
+            printWindow.document.write(`
+                <html>
+                <head>
+                    <title>Emergency Recovery Kit</title>
+                    <style>
+                        body { font-family: monospace; padding: 40px; color: #000; }
+                        .box { border: 2px dashed #000; padding: 20px; margin-top: 20px; text-align: center; }
+                        h1 { text-align: center; }
+                    </style>
+                </head>
+                <body>
+                    <h1>🛡️ VaultGuard Emergency Recovery Kit</h1>
+                    <p><strong>Account:</strong> ${currentUser.email}</p>
+                    <p><strong>Date Generated:</strong> ${new Date().toLocaleDateString()}</p>
+                    <hr>
+                    <p><strong>YOUR RECOVERY CODE:</strong></p>
+                    <div class="box">
+                        <h2>${recoveryKey}</h2>
+                    </div>
+                    <p><strong>⚠️ WARNING:</strong> This is the ONLY way to recover your vault if you forget your Master Password. If someone else gets this code, they can access your vault. Print this and store it in a physical safe.</p>
+                    <script>window.print();</script>
+                </body>
+                </html>
+            `);
+        }
+    } catch (error) {
+        alert("Failed to generate recovery kit.");
+    }
+});
+
+// ============================================
+// DEAD MAN'S SWITCH
+// ============================================
+document.getElementById('setup-switch-btn').addEventListener('click', async () => {
+    const contactEmail = document.getElementById('switch-email').value.trim();
+    const statusDiv = document.getElementById('switch-status');
+    
+    if (!contactEmail) {
+        statusDiv.textContent = "Please enter a valid email.";
+        statusDiv.style.color = "#ef4444";
+        return;
+    }
+
+    const contactPubKey = prompt("Paste your contact's RSA Public Key here (User B's key):");
+    if (!contactPubKey) return;
+
+    try {
+        statusDiv.textContent = "Encrypting...";
+        statusDiv.style.color = "#38bdf8";
+
+        const cleanKey = contactPubKey.replace(/['"\s]+/g, '');
+        const receiverPubKeyBuffer = Uint8Array.from(atob(cleanKey), c => c.charCodeAt(0));
+        const receiverPubKey = await crypto.subtle.importKey(
+            "spki", receiverPubKeyBuffer, { name: "RSA-OAEP", hash: "SHA-256" }, false, ["encrypt"]
+        );
+
+        const encoder = new TextEncoder();
+        const encryptedMasterPwd = await crypto.subtle.encrypt(
+            { name: "RSA-OAEP" },
+            receiverPubKey,
+            encoder.encode(masterPassword)
+        );
+
+        const blobBase64 = btoa(String.fromCharCode(...new Uint8Array(encryptedMasterPwd)));
+
+        const response = await fetch(`${API_URL}/api/switch/setup`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentToken}` },
+            body: JSON.stringify({ contact_email: contactEmail, encrypted_blob: blobBase64 })
+        });
+
+        const data = await response.json();
+        if (data.status === 'success') {
+            statusDiv.textContent = "✅ Switch Activated for " + contactEmail;
+            statusDiv.style.color = "#10b981";
+        } else {
+            throw new Error(data.message);
+        }
+    } catch (error) {
+        statusDiv.textContent = "❌ Error: " + error.message;
+        statusDiv.style.color = "#ef4444";
+    }
+});
+
+async function checkTriggeredSwitches() {
+    try {
+        const response = await fetch(`${API_URL}/api/switch/check`, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${currentToken}` }
+        });
+        const data = await response.json();
+        
+        if (data.status === 'success' && data.triggered_switches.length > 0) {
+            for (let sw of data.triggered_switches) {
+                const wantToClaim = confirm(`🚨 EMERGENCY ACCESS TRIGGERED!\n\n${sw.sender_email} has not logged in for 90 days. Do you want to decrypt their Master Password?`);
+                
+                if (wantToClaim) {
+                    const privKeyBase64 = localStorage.getItem(`privKey_${currentUser.email}`);
+                    if (!privKeyBase64) {
+                        alert("Private key not found on this device.");
+                        continue;
+                    }
+                    
+                    const privKeyBuffer = Uint8Array.from(atob(privKeyBase64), c => c.charCodeAt(0));
+                    const privKey = await crypto.subtle.importKey(
+                        "pkcs8", privKeyBuffer, { name: "RSA-OAEP", hash: "SHA-256" }, false, ["decrypt"]
+                    );
+                    
+                    const encryptedBytes = Uint8Array.from(atob(sw.encrypted_blob), c => c.charCodeAt(0));
+                    const decryptedBuffer = await crypto.subtle.decrypt(
+                        { name: "RSA-OAEP" }, privKey, encryptedBytes
+                    );
+                    
+                    const decryptedMasterPwd = new TextDecoder().decode(decryptedBuffer);
+                    alert(`🔓 Decrypted Master Password for ${sw.sender_email}:\n\n${decryptedMasterPwd}\n\n(In a real app, this would automatically unlock their vault)`);
+                }
+            }
+        }
+    } catch (error) {
+        console.error("Error checking switches:", error);
+    }
+}
+
+// ============================================
 // EVENT LISTENERS
 // ============================================
-
 document.getElementById('setup-2fa-btn').addEventListener('click', handleSetup2FA);
 document.getElementById('enable-2fa-btn').addEventListener('click', handleEnable2FA);
 document.getElementById('disable-2fa-btn').addEventListener('click', handleDisable2FA);
@@ -646,6 +806,7 @@ loginBtn.addEventListener('click', async () => {
         await generateRSAKeyPair(email);
         showVault();
         await loadPasswords();
+        await checkTriggeredSwitches(); // <--- ADDED THIS HERE
     } else {
         loginError.textContent = `❌ ${result.message || 'Login failed'}`;
         setTimeout(() => loginError.textContent = '', 3000);
@@ -719,183 +880,9 @@ registerPassword.addEventListener('keypress', (e) => {
 sitePassword.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') addBtn.click();
 });
-// Function to generate a random recovery key
-function generateRecoveryKey() {
-    const array = new Uint8Array(16);
-    crypto.getRandomValues(array);
-    return Array.from(array).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
-}
 
-// Event Listener for Recovery Button
-document.getElementById('recovery-btn').addEventListener('click', async () => {
-    // 1. Generate a random Recovery Key
-    const recoveryKey = generateRecoveryKey();
-    
-    // 2. Encrypt the Master Password using the Recovery Key
-    const salt = generateSalt();
-    // We use PBKDF2 to turn the recovery key into an AES key
-    const recoveryCryptoKey = await deriveKey(recoveryKey, salt);
-    
-    // Encrypt the master password
-    const encoder = new TextEncoder();
-    const dataBuffer = encoder.encode(masterPassword);
-    const iv = generateIV();
-    const ivBuffer = new Uint8Array(iv.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
-    
-    const encryptedBuffer = await crypto.subtle.encrypt(
-        { name: 'AES-GCM', iv: ivBuffer },
-        recoveryCryptoKey,
-        dataBuffer
-    );
-    
-    const encryptedArray = new Uint8Array(encryptedBuffer);
-    const encryptedHex = Array.from(encryptedArray).map(b => b.toString(16).padStart(2, '0')).join('');
-    
-    // 3. Save the blob to the server
-    const blob = JSON.stringify({ encrypted: encryptedHex, iv: iv, salt: salt });
-    
-    try {
-        const response = await fetch(`${API_URL}/api/recovery/setup`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentToken}` },
-            body: JSON.stringify({ encrypted_master_password: blob })
-        });
-        
-        if (response.ok) {
-            // 4. Open a printable window
-            const printWindow = window.open('', '_blank');
-            printWindow.document.write(`
-                <html>
-                <head>
-                    <title>Emergency Recovery Kit</title>
-                    <style>
-                        body { font-family: monospace; padding: 40px; color: #000; }
-                        .box { border: 2px dashed #000; padding: 20px; margin-top: 20px; text-align: center; }
-                        h1 { text-align: center; }
-                    </style>
-                </head>
-                <body>
-                    <h1>🛡️ VaultGuard Emergency Recovery Kit</h1>
-                    <p><strong>Account:</strong> ${currentUser.email}</p>
-                    <p><strong>Date Generated:</strong> ${new Date().toLocaleDateString()}</p>
-                    <hr>
-                    <p><strong>YOUR RECOVERY CODE:</strong></p>
-                    <div class="box">
-                        <h2>${recoveryKey}</h2>
-                    </div>
-                    <p><strong>⚠️ WARNING:</strong> This is the ONLY way to recover your vault if you forget your Master Password. If someone else gets this code, they can access your vault. Print this and store it in a physical safe.</p>
-                    <script>window.print();</script>
-                </body>
-                </html>
-            `);
-        }
-    } catch (error) {
-        alert("Failed to generate recovery kit.");
-    }
-});
 // ============================================
-// DEAD MAN'S SWITCH LOGIC
+// INITIALIZATION
 // ============================================
-
-// 1. Setup the switch (User A)
-document.getElementById('setup-switch-btn').addEventListener('click', async () => {
-    const contactEmail = document.getElementById('switch-email').value.trim();
-    const statusDiv = document.getElementById('switch-status');
-    
-    if (!contactEmail) {
-        statusDiv.textContent = "Please enter a valid email.";
-        statusDiv.style.color = "#ef4444";
-        return;
-    }
-
-    // We need to encrypt the current Master Password using the Contact's Public Key.
-    // FOR DEMO: We will prompt the user to paste the contact's public key.
-    const contactPubKey = prompt("Paste your contact's RSA Public Key here (User B's key):");
-    if (!contactPubKey) return;
-
-    try {
-        statusDiv.textContent = "Encrypting...";
-        statusDiv.style.color = "#38bdf8";
-
-        // Encrypt the master password with the contact's public key
-        const cleanKey = contactPubKey.replace(/\s+/g, '');
-        const receiverPubKeyBuffer = Uint8Array.from(atob(cleanKey), c => c.charCodeAt(0));
-        const receiverPubKey = await crypto.subtle.importKey(
-            "spki", receiverPubKeyBuffer, { name: "RSA-OAEP", hash: "SHA-256" }, false, ["encrypt"]
-        );
-
-        const encoder = new TextEncoder();
-        const encryptedMasterPwd = await crypto.subtle.encrypt(
-            { name: "RSA-OAEP" },
-            receiverPubKey,
-            encoder.encode(masterPassword)
-        );
-
-        const blobBase64 = btoa(String.fromCharCode(...new Uint8Array(encryptedMasterPwd)));
-
-        // Send to backend
-        const response = await fetch(`${API_URL}/api/switch/setup`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentToken}` },
-            body: JSON.stringify({ contact_email: contactEmail, encrypted_blob: blobBase64 })
-        });
-
-        const data = await response.json();
-        if (data.status === 'success') {
-            statusDiv.textContent = "✅ Switch Activated for " + contactEmail;
-            statusDiv.style.color = "#10b981";
-        } else {
-            throw new Error(data.message);
-        }
-    } catch (error) {
-        statusDiv.textContent = "❌ Error: " + error.message;
-        statusDiv.style.color = "#ef4444";
-    }
-});
-
-// 2. Check for Triggered Switches (User B)
-async function checkTriggeredSwitches() {
-    try {
-        const response = await fetch(`${API_URL}/api/switch/check`, {
-            method: 'GET',
-            headers: { 'Authorization': `Bearer ${currentToken}` }
-        });
-        const data = await response.json();
-        
-        if (data.status === 'success' && data.triggered_switches.length > 0) {
-            for (let sw of data.triggered_switches) {
-                // Show an alert for each triggered switch
-                const wantToClaim = confirm(`🚨 EMERGENCY ACCESS TRIGGERED!\n\n${sw.sender_email} has not logged in for 90 days. Do you want to decrypt their Master Password?`);
-                
-                if (wantToClaim) {
-                    // Decrypt using User B's Private Key
-                    const privKeyBase64 = localStorage.getItem(`privKey_${currentUser.email}`);
-                    if (!privKeyBase64) {
-                        alert("Private key not found on this device.");
-                        continue;
-                    }
-                    
-                    const privKeyBuffer = Uint8Array.from(atob(privKeyBase64), c => c.charCodeAt(0));
-                    const privKey = await crypto.subtle.importKey(
-                        "pkcs8", privKeyBuffer, { name: "RSA-OAEP", hash: "SHA-256" }, false, ["decrypt"]
-                    );
-                    
-                    const encryptedBytes = Uint8Array.from(atob(sw.encrypted_blob), c => c.charCodeAt(0));
-                    const decryptedBuffer = await crypto.subtle.decrypt(
-                        { name: "RSA-OAEP" }, privKey, encryptedBytes
-                    );
-                    
-                    const decryptedMasterPwd = new TextDecoder().decode(decryptedBuffer);
-                    alert(`🔓 Decrypted Master Password for ${sw.sender_email}:\n\n${decryptedMasterPwd}\n\n(In a real app, this would automatically unlock their vault)`);
-                }
-            }
-        }
-    } catch (error) {
-        console.error("Error checking switches:", error);
-    }
-}
-
-// Call the check function when the user logs in (add this to the end of loginBtn click)
-// await checkTriggeredSwitches();
 showAuth();
 console.log('🔐 Password Manager Frontend Loaded!');
