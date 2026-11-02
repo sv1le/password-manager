@@ -719,6 +719,79 @@ registerPassword.addEventListener('keypress', (e) => {
 sitePassword.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') addBtn.click();
 });
+// Function to generate a random recovery key
+function generateRecoveryKey() {
+    const array = new Uint8Array(16);
+    crypto.getRandomValues(array);
+    return Array.from(array).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+}
 
+// Event Listener for Recovery Button
+document.getElementById('recovery-btn').addEventListener('click', async () => {
+    // 1. Generate a random Recovery Key
+    const recoveryKey = generateRecoveryKey();
+    
+    // 2. Encrypt the Master Password using the Recovery Key
+    const salt = generateSalt();
+    // We use PBKDF2 to turn the recovery key into an AES key
+    const recoveryCryptoKey = await deriveKey(recoveryKey, salt);
+    
+    // Encrypt the master password
+    const encoder = new TextEncoder();
+    const dataBuffer = encoder.encode(masterPassword);
+    const iv = generateIV();
+    const ivBuffer = new Uint8Array(iv.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+    
+    const encryptedBuffer = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: ivBuffer },
+        recoveryCryptoKey,
+        dataBuffer
+    );
+    
+    const encryptedArray = new Uint8Array(encryptedBuffer);
+    const encryptedHex = Array.from(encryptedArray).map(b => b.toString(16).padStart(2, '0')).join('');
+    
+    // 3. Save the blob to the server
+    const blob = JSON.stringify({ encrypted: encryptedHex, iv: iv, salt: salt });
+    
+    try {
+        const response = await fetch(`${API_URL}/api/recovery/setup`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentToken}` },
+            body: JSON.stringify({ encrypted_master_password: blob })
+        });
+        
+        if (response.ok) {
+            // 4. Open a printable window
+            const printWindow = window.open('', '_blank');
+            printWindow.document.write(`
+                <html>
+                <head>
+                    <title>Emergency Recovery Kit</title>
+                    <style>
+                        body { font-family: monospace; padding: 40px; color: #000; }
+                        .box { border: 2px dashed #000; padding: 20px; margin-top: 20px; text-align: center; }
+                        h1 { text-align: center; }
+                    </style>
+                </head>
+                <body>
+                    <h1>🛡️ VaultGuard Emergency Recovery Kit</h1>
+                    <p><strong>Account:</strong> ${currentUser.email}</p>
+                    <p><strong>Date Generated:</strong> ${new Date().toLocaleDateString()}</p>
+                    <hr>
+                    <p><strong>YOUR RECOVERY CODE:</strong></p>
+                    <div class="box">
+                        <h2>${recoveryKey}</h2>
+                    </div>
+                    <p><strong>⚠️ WARNING:</strong> This is the ONLY way to recover your vault if you forget your Master Password. If someone else gets this code, they can access your vault. Print this and store it in a physical safe.</p>
+                    <script>window.print();</script>
+                </body>
+                </html>
+            `);
+        }
+    } catch (error) {
+        alert("Failed to generate recovery kit.");
+    }
+});
 showAuth();
 console.log('🔐 Password Manager Frontend Loaded!');

@@ -350,3 +350,26 @@ def get_share(share_id):
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
+
+@app.route('/api/recovery/setup', methods=['POST'])
+def setup_recovery():
+    try:
+        token = request.headers.get('Authorization')
+        if not token: return jsonify({'status': 'error', 'message': 'Auth required'}), 401
+        if token.startswith('Bearer '): token = token[7:]
+        
+        user_id = verify_token(token)
+        if not user_id: return jsonify({'status': 'error', 'message': 'Invalid token'}), 401
+
+        data = request.get_json()
+        encrypted_master_password = data.get('encrypted_master_password')
+
+        # Save to the user's document
+        users_collection.update_one(
+            {'_id': ObjectId(user_id)},
+            {'$set': {'recovery_blob': encrypted_master_password}}
+        )
+
+        return jsonify({'status': 'success', 'message': 'Recovery kit saved!'}), 200
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
