@@ -118,7 +118,11 @@ def login():
             totp = pyotp.TOTP(secret)
             if not totp.verify(totp_code):
                 return jsonify({'status': 'error', 'message': 'Invalid 2FA code'}), 401
-        
+                # Update last login timestamp for Dead Man's Switch
+        users_collection.update_one(
+            {'email': email},
+            {'$set': {'last_login': datetime.utcnow()}}
+        )
         # Generate JWT token
         token_data = {
             'user_id': str(user['_id']),
@@ -371,5 +375,67 @@ def setup_recovery():
         )
 
         return jsonify({'status': 'success', 'message': 'Recovery kit saved!'}), 200
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+# ============================================
+# DEAD MAN'S SWITCH APIS
+# ============================================
+@app.route('/api/switch/setup', methods=['POST'])
+def setup_switch():
+    try:
+        token = request.headers.get('Authorization')
+        if not token: return jsonify({'status': 'error', 'message': 'Auth required'}), 401
+        if token.startswith('Bearer '): token = token[7:]
+        user_id = verify_token(token)
+        if not user_id: return jsonify({'status': 'error', 'message': 'Invalid token'}), 401
+
+        data = request.get_json()
+        contact_email = data.get('contact_email')
+        encrypted_blob = data.get('encrypted_blob')
+
+        # Store the switch details in the user's document
+        users_collection.update_one(
+            {'_id': ObjectId(user_id)},
+            {'$set': {
+                'switch_contact': contact_email,
+                'switch_blob': encrypted_blob,
+                'switch_status': 'active', # active, triggered, claimed
+                'last_login': datetime.utcnow() # Reset the timer
+            }}
+        )
+        return jsonify({'status': 'success', 'message': 'Dead Man\'s Switch activated!'}), 200
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/switch/check', methods=['GET'])
+def check_switch():
+    """Checks if any switches have been triggered for the logged-in user"""
+    try:
+        token = request.headers.get('Authorization')
+        if not token: return jsonify({'status': 'error'}), 401
+        if token.startswith('Bearer '): token = token[7:]
+        user_id = verify_token(token)
+        
+        # Find the current user
+        user = users_collection.find_one({'_id': ObjectId(user_id)})
+        
+        # Find users who nominated THIS user and whose time is up (e.g., 90 days)
+        ninety_days_ago = datetime.utcnow() - timedelta(days=90)
+        
+        triggered_switches = list(users_collection.find({
+            'switch_contact': user['email'],
+            'switch_status': 'active',
+            'last_login': {'$lt': ninety_days_ago}
+        }))
+
+        results = []
+        for sw in triggered_switches:
+            results.append({
+                'sender_email': sw['email'],
+                'encrypted_blob': sw['switch_blob']
+            })
+
+        return jsonify({'status': 'success', 'triggered_switches': results}), 200
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
