@@ -72,6 +72,17 @@ def _iso_or_none(dt):
     return dt.astimezone(timezone.utc).isoformat()
 
 
+def _hash_to_bytes(stored):
+    """
+    [FIX] Normalize a stored password_hash (str, bytes, or bson.Binary) to bytes
+    so bcrypt.checkpw always receives a consistent type.
+    bson.Binary subclasses bytes, so isinstance(_, bytes) is True for it.
+    """
+    if isinstance(stored, bytes):
+        return bytes(stored)
+    return str(stored).encode('utf-8')
+
+
 # ============================================
 # HEALTH
 # ============================================
@@ -101,7 +112,12 @@ def register():
         if users_collection.find_one({'email': email}):
             return jsonify({'status': 'error', 'message': 'User already exists'}), 400
 
-        hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+        # [FIX] Decode the bcrypt hash to a plain str before storing it.
+        # Storing raw bytes makes PyMongo write a BSON Binary, which shows up in
+        # mongosh as Binary.createFromBase64(...) instead of '$2b$12$...'.
+        hashed_password = bcrypt.hashpw(
+            password.encode('utf-8'), bcrypt.gensalt()
+        ).decode('utf-8')
         now = utcnow()
 
         user = {
@@ -146,7 +162,13 @@ def login():
             return jsonify({'status': 'error', 'message': 'Email and password are required'}), 400
 
         user = users_collection.find_one({'email': email})
-        if not user or not bcrypt.checkpw(password.encode('utf-8'), user['password_hash']):
+        if not user:
+            return jsonify({'status': 'error', 'message': 'Invalid email or password'}), 401
+
+        # [FIX] Normalize stored hash to bytes. Handles both new str docs
+        # and legacy docs where PyMongo wrote a BSON Binary (bson.Binary).
+        stored_hash_bytes = _hash_to_bytes(user['password_hash'])
+        if not bcrypt.checkpw(password.encode('utf-8'), stored_hash_bytes):
             return jsonify({'status': 'error', 'message': 'Invalid email or password'}), 401
 
         # 2FA gate
@@ -223,8 +245,17 @@ def get_vault():
             return jsonify({'status': 'error', 'message': 'Invalid or expired token'}), 401
 
         vault = vaults_collection.find_one({'user_id': user_id})
+
+        # [FIX] Distinguish "no vault row yet" from "empty vault" so the client
+        # can bootstrap an initial encrypted [] on first login. Before this,
+        # both cases returned status=success with data=null, which hid the bug
+        # where a fresh user had no db.vaults document at all.
         if not vault:
-            return jsonify({'status': 'success', 'data': None, 'message': 'No vault found'}), 200
+            return jsonify({
+                'status': 'not_found',
+                'data': None,
+                'message': 'No vault yet'
+            }), 404
 
         return jsonify({
             'status': 'success',
