@@ -41,6 +41,11 @@ const strengthDiv = document.getElementById('password-strength');
 const checkBreachBtn = document.getElementById('check-breach-btn');
 const warningDiv = document.getElementById('breach-warning');
 
+// 2FA Elements
+const setup2FABtn = document.getElementById('setup-2fa-btn');
+const enable2FABtn = document.getElementById('enable-2fa-btn');
+const disable2FABtn = document.getElementById('disable-2fa-btn');
+
 // ============================================
 // CRYPTO — KEY DERIVATION / ENCRYPTION
 // ============================================
@@ -429,9 +434,6 @@ function showVault() {
 async function loadPasswords() {
     const result = await getVault();
 
-    // [FIX] getVault() now returns status:'not_found' (HTTP 404) when the user
-    // has no vault row yet. Treat that the same as an empty vault — the caller
-    // (login handler) is responsible for bootstrapping an empty encrypted vault.
     if (result.status === 'error' || result.status === 'not_found' || !result.data) {
         passwordsContainer.innerHTML = '<div class="empty-state">🔐 No passwords saved yet.</div>';
         return;
@@ -493,10 +495,9 @@ async function loadPasswords() {
                 const receiverEmail = prompt("Enter the receiver's email (they must have registered):");
                 if (!receiverEmail) return;
 
-                // We need their public key. Since it's device-bound, we ask the sender to paste it.
                 const receiverPubKey = prompt(
                     `Paste ${receiverEmail}'s RSA Public Key.\n\n` +
-                    `(They can find it in their browser localStorage under "pubKey_${receiverEmail.trim().toLowerCase()}" — or ask them to click "Copy My Public Key" next time they log in.)`
+                    `(They can find it in their browser localStorage under "pubKey_${receiverEmail.trim().toLowerCase()}")`
                 );
                 if (!receiverPubKey) return;
 
@@ -566,9 +567,8 @@ async function handleCopyMyPublicKey() {
     }
     try {
         await navigator.clipboard.writeText(pubKey);
-        alert("✅ Your RSA Public Key has been copied to clipboard.\n\nShare it with anyone who wants to send you encrypted secrets (e.g., their Dead Man's Switch).");
+        alert("✅ Your RSA Public Key has been copied to clipboard.\n\nShare it with anyone who wants to send you encrypted secrets.");
     } catch (err) {
-        // Fallback for browsers without clipboard API
         prompt("Copy your public key manually:", pubKey);
     }
 }
@@ -646,11 +646,6 @@ document.getElementById('recovery-btn').addEventListener('click', async () => {
 // ============================================
 // DEAD MAN'S SWITCH
 // ============================================
-
-/**
- * Load the current user's switch configuration and display status.
- * Also wires the "Activate" / "Disable" buttons dynamically.
- */
 async function loadSwitchStatus() {
     const statusDiv = document.getElementById('switch-status');
     const setupBtn = document.getElementById('setup-switch-btn');
@@ -692,7 +687,6 @@ async function loadSwitchStatus() {
             setupBtn.textContent = "Reset Switch";
         }
 
-        // Sync the email input from saved config
         const emailInput = document.getElementById('switch-email');
         if (emailInput && sw.contact_email) {
             emailInput.value = sw.contact_email;
@@ -704,9 +698,6 @@ async function loadSwitchStatus() {
     }
 }
 
-/**
- * Arm (or update) the switch. Encrypts the master password with the CONTACT's RSA pubkey.
- */
 document.getElementById('setup-switch-btn').addEventListener('click', async () => {
     const contactEmail = (document.getElementById('switch-email').value || '').trim().toLowerCase();
     const statusDiv = document.getElementById('switch-status');
@@ -769,14 +760,9 @@ document.getElementById('setup-switch-btn').addEventListener('click', async () =
         statusDiv.style.color = "#ef4444";
     } finally {
         btn.disabled = false;
-        // Button text is refreshed by loadSwitchStatus
     }
 });
 
-/**
- * Check for any switches that have fired for THIS user (as contact).
- * Called on login and periodically. If triggered, asks user to claim.
- */
 async function checkTriggeredSwitches() {
     try {
         const response = await fetch(`${API_URL}/api/switch/check`, {
@@ -809,20 +795,11 @@ async function checkTriggeredSwitches() {
     }
 }
 
-/**
- * Claim a triggered switch. Fetches the encrypted master-password blob AND the
- * sender's encrypted vault. Then decrypts both locally using THIS user's RSA
- * private key + recovered master password.
- */
 async function claimSwitch(senderId, senderEmail) {
     try {
-        // Step 1: This user's private key
         const privKeyBase64 = getPrivateKey(currentUser.email);
         if (!privKeyBase64) {
-            alert(
-                `❌ Private key not found on this device.\n\n` +
-                `Your RSA private key is stored in this browser only. If you set up your account on a different device/browser, you cannot decrypt this switch here.`
-            );
+            alert(`❌ Private key not found on this device.\n\nYour RSA private key is stored in this browser only.`);
             return;
         }
 
@@ -831,7 +808,6 @@ async function claimSwitch(senderId, senderEmail) {
             "pkcs8", privKeyBuffer, { name: "RSA-OAEP", hash: "SHA-256" }, false, ["decrypt"]
         );
 
-        // Step 2: Ask server for the claim payload (encrypted blob + encrypted vault)
         const response = await fetch(`${API_URL}/api/switch/claim/${senderId}`, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${currentToken}` }
@@ -844,15 +820,12 @@ async function claimSwitch(senderId, senderEmail) {
         }
 
         const payload = data.data;
-
-        // Step 3: Decrypt the master password
         const encryptedBlobBytes = Uint8Array.from(atob(payload.encrypted_blob), c => c.charCodeAt(0));
         const decryptedMasterPwdBuffer = await crypto.subtle.decrypt(
             { name: "RSA-OAEP" }, privKey, encryptedBlobBytes
         );
         const recoveredMasterPassword = new TextDecoder().decode(decryptedMasterPwdBuffer);
 
-        // Step 4: If we have the sender's vault, decrypt it and show the passwords
         let vaultPasswords = null;
         if (payload.vault) {
             try {
@@ -872,7 +845,6 @@ async function claimSwitch(senderId, senderEmail) {
             }
         }
 
-        // Step 5: Display results
         showClaimedVault(senderEmail, recoveredMasterPassword, vaultPasswords);
 
     } catch (error) {
@@ -881,9 +853,6 @@ async function claimSwitch(senderId, senderEmail) {
     }
 }
 
-/**
- * Render claimed vault contents in a modal-ish overlay.
- */
 function showClaimedVault(senderEmail, recoveredMasterPassword, vaultPasswords) {
     const overlay = document.createElement('div');
     overlay.style.cssText =
@@ -937,7 +906,6 @@ function showClaimedVault(senderEmail, recoveredMasterPassword, vaultPasswords) 
     });
 }
 
-// Simple HTML escaper to prevent XSS in the modal
 function escapeHtml(str) {
     if (str == null) return '';
     return String(str)
@@ -948,12 +916,8 @@ function escapeHtml(str) {
         .replace(/'/g, '&#39;');
 }
 
-// ============================================
-// SWITCH POLLING (periodically check for triggered switches)
-// ============================================
 function startSwitchPolling() {
     stopSwitchPolling();
-    // Check every 60 seconds while the vault is open
     switchPollInterval = setInterval(() => {
         if (currentToken && vaultSection.style.display !== 'none') {
             checkTriggeredSwitches();
@@ -979,7 +943,7 @@ function evaluateStrength(pw) {
     if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) score++;
     if (/\d/.test(pw)) score++;
     if (/[^A-Za-z0-9]/.test(pw)) score++;
-    return score; // 0..6
+    return score;
 }
 
 if (sitePasswordInput && strengthDiv) {
@@ -1021,6 +985,13 @@ if (checkBreachBtn && warningDiv) {
         }
     });
 }
+
+// ============================================
+// 2FA EVENT LISTENERS
+// ============================================
+if (setup2FABtn) setup2FABtn.addEventListener('click', handleSetup2FA);
+if (enable2FABtn) enable2FABtn.addEventListener('click', handleEnable2FA);
+if (disable2FABtn) disable2FABtn.addEventListener('click', handleDisable2FA);
 
 // ============================================
 // AUTH UI HANDLERS
@@ -1069,7 +1040,6 @@ if (registerBtn) {
         registerBtn.textContent = 'Register';
 
         if (result.status === 'success') {
-            // Generate RSA keys for this account on this device
             await generateRSAKeyPair(email);
             alert('✅ Account created! You can now log in.');
             registerForm.style.display = 'none';
@@ -1104,25 +1074,18 @@ if (loginBtn) {
         if (result.status === 'success') {
             currentToken = result.token;
             currentUser = result.user;
-            masterPassword = password; // used locally for vault decryption
+            masterPassword = password;
 
-            // Ensure RSA keys exist for sharing / switch on this device
             await generateRSAKeyPair(currentUser.email);
 
             showVault();
             await loadPasswords();
 
-            // [FIX] Bootstrap an empty encrypted vault on first login so the
-            // demo always has a ciphertext row in db.vaults. app.py now returns
-            // status:'not_found' (HTTP 404) from GET /api/vault when no row
-            // exists; we react to that by writing an encrypted [] via the real
-            // PBKDF2 → AES-GCM path, so the narration stays honest.
             const existing = await getVault();
             if (existing.status === 'not_found') {
                 await saveAndReload([]);
             }
 
-            // Check once immediately, then start polling
             await checkTriggeredSwitches();
             startSwitchPolling();
         } else {
@@ -1159,7 +1122,6 @@ if (addBtn) {
         }
 
         try {
-            // Load existing vault entries first
             const vaultResult = await getVault();
             let entries = [];
             if (vaultResult.status === 'success' && vaultResult.data) {
@@ -1193,12 +1155,10 @@ if (addBtn) {
 // ============================================
 (function init() {
     showAuth();
-    // Wire the "copy my public key" button if present
     const copyBtn = document.getElementById('copy-pubkey-btn');
     if (copyBtn) {
         copyBtn.addEventListener('click', handleCopyMyPublicKey);
     }
-    // Wire the disable-switch button if present
     const disableSwitchBtn = document.getElementById('disable-switch-btn');
     if (disableSwitchBtn) {
         disableSwitchBtn.addEventListener('click', async () => {

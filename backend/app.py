@@ -44,12 +44,9 @@ SWITCH_TIMEOUT_DAYS = 90
 # HELPERS
 # ============================================
 def utcnow():
-    """Timezone-aware UTC now. Use this everywhere so comparisons are consistent."""
     return datetime.now(timezone.utc)
 
-
 def extract_token():
-    """Pull and validate the Bearer token. Returns user_id string or None."""
     token = request.headers.get('Authorization')
     if not token:
         return None
@@ -61,23 +58,14 @@ def extract_token():
     except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
         return None
 
-
 def _iso_or_none(dt):
-    """Serialize a datetime to ISO-8601 in UTC, or None."""
     if dt is None:
         return None
     if dt.tzinfo is None:
-        # Assume naive datetimes we stored were UTC
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc).isoformat()
 
-
 def _hash_to_bytes(stored):
-    """
-    [FIX] Normalize a stored password_hash (str, bytes, or bson.Binary) to bytes
-    so bcrypt.checkpw always receives a consistent type.
-    bson.Binary subclasses bytes, so isinstance(_, bytes) is True for it.
-    """
     if isinstance(stored, bytes):
         return bytes(stored)
     return str(stored).encode('utf-8')
@@ -112,9 +100,6 @@ def register():
         if users_collection.find_one({'email': email}):
             return jsonify({'status': 'error', 'message': 'User already exists'}), 400
 
-        # [FIX] Decode the bcrypt hash to a plain str before storing it.
-        # Storing raw bytes makes PyMongo write a BSON Binary, which shows up in
-        # mongosh as Binary.createFromBase64(...) instead of '$2b$12$...'.
         hashed_password = bcrypt.hashpw(
             password.encode('utf-8'), bcrypt.gensalt()
         ).decode('utf-8')
@@ -128,7 +113,6 @@ def register():
             'twofa_secret': None,
             'twofa_enabled': False,
             'last_login': now,
-            # Switch defaults
             'switch_contact': None,
             'switch_blob': None,
             'switch_status': 'inactive',
@@ -165,13 +149,10 @@ def login():
         if not user:
             return jsonify({'status': 'error', 'message': 'Invalid email or password'}), 401
 
-        # [FIX] Normalize stored hash to bytes. Handles both new str docs
-        # and legacy docs where PyMongo wrote a BSON Binary (bson.Binary).
         stored_hash_bytes = _hash_to_bytes(user['password_hash'])
         if not bcrypt.checkpw(password.encode('utf-8'), stored_hash_bytes):
             return jsonify({'status': 'error', 'message': 'Invalid email or password'}), 401
 
-        # 2FA gate
         if user.get('twofa_enabled', False):
             totp_code = data.get('totp_code')
             if not totp_code:
@@ -180,7 +161,6 @@ def login():
             if not secret or not pyotp.TOTP(secret).verify(totp_code):
                 return jsonify({'status': 'error', 'message': 'Invalid 2FA code'}), 401
 
-        # Refresh activity timestamp → resets the Dead Man's Switch timer
         users_collection.update_one(
             {'_id': user['_id']},
             {'$set': {'last_login': utcnow(), 'updated_at': utcnow()}}
@@ -246,10 +226,6 @@ def get_vault():
 
         vault = vaults_collection.find_one({'user_id': user_id})
 
-        # [FIX] Distinguish "no vault row yet" from "empty vault" so the client
-        # can bootstrap an initial encrypted [] on first login. Before this,
-        # both cases returned status=success with data=null, which hid the bug
-        # where a fresh user had no db.vaults document at all.
         if not vault:
             return jsonify({
                 'status': 'not_found',
@@ -462,16 +438,8 @@ def setup_recovery():
 # ============================================
 # DEAD MAN'S SWITCH
 # ============================================
-
 @app.route('/api/switch/setup', methods=['POST'])
 def setup_switch():
-    """
-    Arm a Dead Man's Switch. The sender provides:
-      - contact_email: email of the trusted contact (must match an existing user's email to be claimable)
-      - encrypted_blob: the sender's Master Password (or vault key) encrypted with the contact's RSA public key
-
-    Also resets last_login so the countdown starts now.
-    """
     try:
         user_id = extract_token()
         if not user_id:
@@ -484,7 +452,6 @@ def setup_switch():
         if not contact_email or not encrypted_blob:
             return jsonify({'status': 'error', 'message': 'contact_email and encrypted_blob are required'}), 400
 
-        # Prevent arming a switch pointing at yourself
         sender = users_collection.find_one({'_id': ObjectId(user_id)})
         if not sender:
             return jsonify({'status': 'error', 'message': 'User not found'}), 404
@@ -499,7 +466,7 @@ def setup_switch():
                 'switch_status': 'active',
                 'switch_triggered_at': None,
                 'switch_claimed_at': None,
-                'last_login': utcnow(),   # start the countdown now
+                'last_login': utcnow(),
                 'updated_at': utcnow()
             }}
         )
@@ -514,7 +481,6 @@ def setup_switch():
 
 @app.route('/api/switch/status', methods=['GET'])
 def switch_status():
-    """Return the current user's own switch configuration/state."""
     try:
         user_id = extract_token()
         if not user_id:
@@ -552,7 +518,6 @@ def switch_status():
 
 @app.route('/api/switch/disable', methods=['POST'])
 def disable_switch():
-    """Disarm the caller's switch."""
     try:
         user_id = extract_token()
         if not user_id:
@@ -575,20 +540,6 @@ def disable_switch():
 
 @app.route('/api/switch/check', methods=['GET'])
 def check_switch():
-    """
-    Return any ARMED switches that have exceeded the inactivity window AND
-    are assigned to the calling user's email. Marks them 'triggered' so the
-    contact is alerted once. The contact must still explicitly call
-    /api/switch/claim to retrieve the (encrypted) vault to decrypt locally.
-
-    Trigger condition:
-        switch_status == 'active'
-        switch_contact == caller's email
-        now - last_login >= SWITCH_TIMEOUT_DAYS
-
-    We filter with the deadline computed on the server, so we don't depend on
-    naive vs aware datetime comparisons inside a Mongo query.
-    """
     try:
         user_id = extract_token()
         if not user_id:
@@ -600,7 +551,6 @@ def check_switch():
 
         deadline = utcnow() - timedelta(days=SWITCH_TIMEOUT_DAYS)
 
-        # Broad query, then precise filter in Python to be robust to naive/aware dates.
         candidates = list(users_collection.find({
             'switch_contact': caller['email'],
             'switch_status': 'active'
@@ -618,8 +568,6 @@ def check_switch():
 
         results = []
         for sw in triggered:
-            # Mark triggered so contact isn't spammed on every login,
-            # but do NOT mark claimed yet.
             users_collection.update_one(
                 {'_id': sw['_id']},
                 {'$set': {'switch_status': 'triggered', 'switch_triggered_at': utcnow()}}
@@ -643,15 +591,6 @@ def check_switch():
 
 @app.route('/api/switch/claim/<sender_user_id>', methods=['POST'])
 def claim_switch(sender_user_id):
-    """
-    The contact confirms they want to claim. This:
-      1. Verifies the sender exists and the switch is 'triggered' (not already claimed)
-      2. Verifies the caller's email matches the sender's switch_contact
-      3. Returns BOTH the sender's encrypted master-password blob AND the sender's
-         encrypted vault (encrypted_data/iv/salt) so the contact can decrypt locally
-         using the recovered master password.
-      4. Marks the switch 'claimed'
-    """
     try:
         user_id = extract_token()
         if not user_id:
