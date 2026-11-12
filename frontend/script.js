@@ -552,7 +552,7 @@ async function saveAndReload(passwords) {
 }
 
 // ============================================
-// PUBLIC KEY HELPER (so contacts can share their key)
+// PUBLIC KEY HELPER
 // ============================================
 function getMyPublicKey() {
     if (!currentUser) return null;
@@ -567,7 +567,7 @@ async function handleCopyMyPublicKey() {
     }
     try {
         await navigator.clipboard.writeText(pubKey);
-        alert("✅ Your RSA Public Key has been copied to clipboard.\n\nShare it with anyone who wants to send you encrypted secrets.");
+        alert("✅ Your RSA Public Key has been copied to clipboard.");
     } catch (err) {
         prompt("Copy your public key manually:", pubKey);
     }
@@ -630,7 +630,7 @@ document.getElementById('recovery-btn').addEventListener('click', async () => {
                     <div class="box">
                         <h2>${recoveryKey}</h2>
                     </div>
-                    <p><strong>⚠️ WARNING:</strong> This is the ONLY way to recover your vault if you forget your Master Password. If someone else gets this code, they can access your vault. Print this and store it in a physical safe.</p>
+                    <p><strong>⚠️ WARNING:</strong> This is the ONLY way to recover your vault if you forget your Master Password. Print this and store it in a physical safe.</p>
                     <script>window.print();<\/script>
                 </body>
                 </html>
@@ -799,7 +799,7 @@ async function claimSwitch(senderId, senderEmail) {
     try {
         const privKeyBase64 = getPrivateKey(currentUser.email);
         if (!privKeyBase64) {
-            alert(`❌ Private key not found on this device.\n\nYour RSA private key is stored in this browser only.`);
+            alert(`❌ Private key not found on this device.`);
             return;
         }
 
@@ -820,7 +820,11 @@ async function claimSwitch(senderId, senderEmail) {
         }
 
         const payload = data.data;
-        const encryptedBlobBytes = Uint8Array.from(atob(payload.encrypted_blob), c => c.charCodeAt(0));
+        
+        // SANITIZE BASE64 BLOB to prevent OperationError
+        const cleanBlob = String(payload.encrypted_blob).replace(/[\s\n\r]+/g, '');
+        const encryptedBlobBytes = Uint8Array.from(atob(cleanBlob), c => c.charCodeAt(0));
+        
         const decryptedMasterPwdBuffer = await crypto.subtle.decrypt(
             { name: "RSA-OAEP" }, privKey, encryptedBlobBytes
         );
@@ -839,7 +843,7 @@ async function claimSwitch(senderId, senderEmail) {
                 console.error("Vault decrypt failed:", decErr);
                 alert(
                     `🔓 Recovered Master Password for ${senderEmail}:\n\n${recoveredMasterPassword}\n\n` +
-                    `⚠️ But the vault could not be decrypted (maybe the master password was changed after the switch was armed).`
+                    `⚠️ But the vault could not be decrypted.`
                 );
                 return;
             }
@@ -890,9 +894,6 @@ function showClaimedVault(senderEmail, recoveredMasterPassword, vaultPasswords) 
         <div style="background:#020617;border-radius:8px;margin-bottom:16px;">
             ${rows}
         </div>
-        <p style="color:#f59e0b;font-size:12px;">
-            ⚠️ Store this information securely and delete it from your screen when done.
-        </p>
         <button id="close-claimed-vault" style="background:#00d4ff;color:#020617;
                 border:none;padding:10px 20px;border-radius:8px;cursor:pointer;
                 font-weight:600;">Close</button>

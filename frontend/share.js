@@ -18,12 +18,9 @@ const errorMsg = document.getElementById('error-msg');
 async function decryptShare(shareBlobString, userEmail) {
     const shareBlob = JSON.parse(shareBlobString);
     
-    // DEBUG: See exactly what is coming from the server
-    console.log("Received Share Blob:", shareBlob);
-
     // 1. Get the user's Private Key from localStorage
     const privBase64 = localStorage.getItem(`privKey_${userEmail}`);
-    if (!privBase64) throw new Error("Private key not found. Did you log into the main app on THIS device to generate your keys?");
+    if (!privBase64) throw new Error("Private key not found for this email on this device.");
 
     // 2. Import the Private Key
     const privKeyBuffer = Uint8Array.from(atob(privBase64), c => c.charCodeAt(0));
@@ -35,19 +32,17 @@ async function decryptShare(shareBlobString, userEmail) {
         ["decrypt"]
     );
 
-    // 3. Decrypt the AES Key
-    // FIX: Ensure it's a clean string, no hidden spaces or newlines
-    const cleanEncryptedKey = String(shareBlob.encryptedKey).replace(/\s+/g, '');
+    // 3. Decrypt the AES Key (Sanitized)
+    const cleanEncryptedKey = String(shareBlob.encryptedKey).replace(/[\s\n\r]+/g, '');
     const encryptedAesKey = Uint8Array.from(atob(cleanEncryptedKey), c => c.charCodeAt(0));
     const rawAesKey = await crypto.subtle.decrypt({ name: "RSA-OAEP" }, privKey, encryptedAesKey);
 
     // 4. Import the AES Key
     const aesKey = await crypto.subtle.importKey("raw", rawAesKey, { name: "AES-GCM" }, false, ["decrypt"]);
 
-    // 5. Decrypt the Data
-    // FIX: Ensure these are clean strings too
-    const cleanEncryptedData = String(shareBlob.encryptedData).replace(/\s+/g, '');
-    const cleanIv = String(shareBlob.iv).replace(/\s+/g, '');
+    // 5. Decrypt the Data (Sanitized)
+    const cleanEncryptedData = String(shareBlob.encryptedData).replace(/[\s\n\r]+/g, '');
+    const cleanIv = String(shareBlob.iv).replace(/[\s\n\r]+/g, '');
 
     const encryptedData = Uint8Array.from(atob(cleanEncryptedData), c => c.charCodeAt(0));
     const iv = Uint8Array.from(atob(cleanIv), c => c.charCodeAt(0));
@@ -61,7 +56,7 @@ async function decryptShare(shareBlobString, userEmail) {
 // EVENT LISTENER
 // ============================================
 decryptBtn.addEventListener('click', async () => {
-    const email = emailInput.value.trim().toLowerCase(); // Force lowercase
+    const email = emailInput.value.trim().toLowerCase();
     
     if (!shareId) {
         errorMsg.textContent = "❌ Invalid share link. No ID found.";
@@ -77,16 +72,13 @@ decryptBtn.addEventListener('click', async () => {
     errorMsg.textContent = '';
 
     try {
-        // Fetch the encrypted blob from the backend
         const response = await fetch(`${API_URL}/api/share/${shareId}`);
         const data = await response.json();
 
         if (data.status === 'error') throw new Error(data.message);
 
-        // Decrypt it locally
         const decryptedItem = await decryptShare(data.data.shared_blob, email);
 
-        // Show the result on the screen
         document.getElementById('res-site').textContent = decryptedItem.site;
         document.getElementById('res-username').textContent = decryptedItem.username;
         document.getElementById('res-password').textContent = decryptedItem.password;
